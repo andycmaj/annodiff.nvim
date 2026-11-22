@@ -1,0 +1,21 @@
+HEAD~1 → HEAD                      │ 󰈔 1 󰈔 HEAD~1 󰌠 app.py                                            │ 󰈔 1 󰈔 HEAD 󰌠 app.py
+1 file                             │    4   def greet(name):                                            │    4   def greet(name):
+M app.py                           │    3       return f"hello {name}"                                  │    3       return f"hello {name}"
+                                   │    2                                                               │    2
+                                   │    1                                                               │    1
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    5   def farewell(name):
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    1       return f"bye {name}"
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    2
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    3
+                                   │    5   print(greet("world"))                                       │    4   print(greet("world"))
+ NORMAL  app.py [-]  󰌠  annodiff:/…/HEAD/app.py 󰌾                                                                                                   󰌠 python  55%    5:1  
+  ⎿  · Which diff should annodiff review? → A ref or range
+⏺ Which ref or range should it review? Examples: HEAD~1 or main (each compared with the worktree), A..B, A...B, or --staged [ref].
+✻ Sautéed for 6s · done 9:26 AM
+❯ HEAD~1..HEAD
+  Ran 1 shell command
+⏺ New tmux window shows HEAD~1..HEAD: commit 7f3ab21 "add farewell" only. Right side is committed HEAD, not worktree, so your uncommitted app.py edits aren't shown. Annotate a line with \a or a whole file with \A. Send
+  notes here with \s (or O in the tree), or close the review. \c asks an inline agent without sending anything here. Three earlier reviews may still be open in own windows.
+✻ Churned for 4s · done 9:26 AM
+                                                                                                                                                                    Update available! Run: brew upgrade claude-code@latest
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

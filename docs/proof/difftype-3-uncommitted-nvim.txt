@@ -1,0 +1,20 @@
+    󰈔 [No Name]     ▕     󰌠 app.py                                                                                                                             ▏ 1 ▕▏ 2 ▕ 
+HEAD → worktree                    │ 󰈔 1 󰈔 HEAD 󰌠 app.py                                              │ 󰌠 app.py 󰊕 def greet
+1 file                             │    1   def greet(name):                                            │    1   def greet(name):
+M app.py                           │    2       return f"hello {name}"                                  │    2 ▎ │   return f"hi {name}"  Not Committed Yet
+                                   │    1                                                               │    1
+                                   │    2                                                               │    2
+                                   │    3   def farewell(name):                                         │    3   def farewell(name):
+                                   │    4       return f"bye {name}"                                    │    4   │   return f"bye {name}"
+                                   │    5                                                               │    5
+                                   │    6                                                               │    6
+                                   │    7   print(greet("world"))                                       │    7   print(greet("world"))
+ NORMAL   feature  app.py  󰌠  app.py                                                                                                    󰌠 python   copilot  22%    2:1  
+⏺ User answered Claude's questions:
+  ⎿  · Which diff should annodiff review? → Uncommitted changes
+  Ran 1 shell command
+⏺ New tmux window shows only uncommitted changes: app.py, HEAD vs worktree. Annotate a line with \a or a whole file with \A. Send notes here with \s (or O in the tree), or close the review. \c asks an inline agent
+  without sending anything here. Earlier --base origin/main review may still be open in its own window.
+✻ Worked for 8s · done 9:25 AM
+                                                                                                                                                                    Update available! Run: brew upgrade claude-code@latest
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -12,9 +12,9 @@ vim.api.nvim_create_user_command("Annodiff", function(cmd)
   require("annodiff").open(cmd.fargs)
 end, {
   nargs = "*",
-  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B]",
+  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B | --base [branch] | --pr [N|URL]]",
   complete = function(arglead)
-    local items = { "--staged", "--inline", "--split" }
+    local items = { "--staged", "--inline", "--split", "--base", "--pr" }
     vim.list_extend(items, require("annodiff.git").refs())
     return vim.tbl_filter(function(item)
       return vim.startswith(item, arglead)

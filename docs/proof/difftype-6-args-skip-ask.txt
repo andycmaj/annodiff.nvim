@@ -1,0 +1,13 @@
+PR #3 main → 25cbdcd               │ 󰈔 1 󰈔 8bedafa5  README.md 󰉫 app                                │ 󰈔 1 󰈔 25cbdcdd  README.md 󰉫 app
+2 files                            │    2   # app                                                       │    2   # app
+M README.md                        │    1                                                               │    1
+M app.py                           │    3   Says hello.                                                 │    3   Says hello and bye.
+ NORMAL  README.md [-]    annodiff:/…/25cbdcdd/README.md 󰌾                                                                                        markdown  Bot    3:1  
+❯ /annodiff:annodiff #3
+  Ran 1 shell command
+⏺ PR #3 ("Add farewell(name)") open in new tmux window: PR head vs merge base with main. Right side is pushed head, read-only, not worktree. Annotate a line with \a or a whole file with \A. Send notes here with \s (or O
+  in the tree), or close the review. \c asks an inline agent without sending anything here.
+  Four earlier review windows may still be open, one of them already PR #3. Close extras to avoid sending notes from wrong one.
+✻ Crunched for 4s · done 9:27 AM
+                                                                                                                                                                    Update available! Run: brew upgrade claude-code@latest
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

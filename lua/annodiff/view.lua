@@ -271,7 +271,7 @@ end
 
 ---@param s annodiff.Session
 function M.render_tree(s)
-  local header = git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right)
+  local header = s.spec.title or (git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right))
   local counts = {}
   for _, file in ipairs(s.store:files()) do
     counts[file] = s.store:count(file)

@@ -60,8 +60,10 @@ describe("plugin manifests", function()
       local manifest = json(vim.fs.normalize(root .. "/" .. p.source .. "/.claude-plugin/plugin.json"))
       eq(p.name, manifest.name)
       eq(p.version, manifest.version, p.name .. " version matches the marketplace entry")
+      eq("MIT", manifest.license, p.name .. " license")
     end
     eq({ "annodiff", "annodiff-planning" }, names)
+    truthy(read(root .. "/LICENSE"):find("MIT License", 1, true))
   end)
 
   it("the skill sits where the main plugin discovers it, with executable scripts", function()
@@ -98,6 +100,16 @@ printf '%%s\n' "$*" >> %s
     "755"
   )
   write(bin .. "/nvim", "#!/bin/sh\n", "755")
+  -- stub gh: `pr view` prints $STUB_GH_PR (what --jq would print), or fails like gh
+  -- does on a branch with no PR
+  write(
+    bin .. "/gh",
+    [[#!/bin/sh
+[ -n "${STUB_GH_PR:-}" ] || { echo "no pull requests found for branch" >&2; exit 1; }
+printf '%s\n' "$STUB_GH_PR"
+]],
+    "755"
+  )
   local env = { PATH = bin .. ":" .. vim.env.PATH, TMUX = "/tmp/stub,1,0", TMUX_PANE = "%99", CLAUDE_PLUGIN_DATA = "" }
 
   local function open_in(repo, args, extra)
@@ -107,10 +119,18 @@ printf '%%s\n' "$*" >> %s
     return res, ((read(log) or ""):gsub("\\(.)", "%1"))
   end
 
-  it("on main with uncommitted changes reviews HEAD vs worktree, notes back to this pane", function()
+  local function options(stdout)
+    local out = {}
+    for label, args in stdout:gmatch("option: ([^|\n]-) | ([^|\n]-) |") do
+      table.insert(out, label .. " = " .. args)
+    end
+    return out
+  end
+
+  it("explicit args open :Annodiff in a new window, notes back to this pane", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
     write(repo .. "/a.txt", "b\n")
-    local res, calls = open_in(repo)
+    local res, calls = open_in(repo, { "HEAD" })
     eq(0, res.code, res.stderr)
     truthy(calls:find("new-window -n annodiff", 1, true), calls)
     truthy(calls:find("Annodiff HEAD", 1, true), calls)
@@ -118,34 +138,75 @@ printf '%%s\n' "$*" >> %s
     truthy(calls:find("set rtp^=" .. root, 1, true), "loads this checkout's annodiff")
   end)
 
-  it("on a clean main reviews the last commit", function()
+  it("no args on main with uncommitted changes: asks, uncommitted first, opens nothing", function()
+    local repo = repo_with({ ["a.txt"] = "a\n" })
+    write(repo .. "/a.txt", "b\n")
+    local res, calls = open_in(repo)
+    eq(0, res.code, res.stderr)
+    truthy(res.stdout:find("needs_ask: true", 1, true), res.stdout)
+    eq({
+      "Uncommitted changes = HEAD",
+      "A pull request = --pr <number or URL>",
+      "A ref or range = <ref>",
+    }, options(res.stdout))
+    eq("", calls)
+  end)
+
+  it("no args on a clean main: the last commit instead of uncommitted", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
     write(repo .. "/a.txt", "b\n")
     sh(repo, { "git", "commit", "-qam", "two" })
-    local _, calls = open_in(repo)
-    truthy(calls:find("Annodiff HEAD~1", 1, true), calls)
+    local res = open_in(repo)
+    eq("Last commit = HEAD~1", options(res.stdout)[1], res.stdout)
+    eq(nil, res.stdout:find("--base", 1, true), "nothing since the base on the base branch itself")
   end)
 
-  it("on a clean feature branch reviews the merge base vs the worktree", function()
+  it("no args on a dirty feature branch: since base first, then uncommitted", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
-    local base = vim.trim(sh(repo, { "git", "rev-parse", "--short", "HEAD" }))
     sh(repo, { "git", "checkout", "-qb", "feature" })
     write(repo .. "/a.txt", "b\n")
     sh(repo, { "git", "commit", "-qam", "feat" })
-    local _, calls = open_in(repo)
-    truthy(calls:find("Annodiff " .. base, 1, true), calls)
+    write(repo .. "/a.txt", "c\n")
+    local res, calls = open_in(repo)
+    eq({
+      "Everything since main = --base main",
+      "Uncommitted changes = HEAD",
+      "A pull request = --pr <number or URL>",
+      "A ref or range = <ref>",
+    }, options(res.stdout))
+    truthy(res.stdout:find("1 commit(s) on feature plus uncommitted changes", 1, true), res.stdout)
+    truthy(res.stdout:find("base_branch: main", 1, true), res.stdout)
+    eq("", calls)
   end)
 
-  it("on a dirty feature branch opens nothing and asks", function()
+  it("no args on a branch with a PR offers that PR by number", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
-    local base = vim.trim(sh(repo, { "git", "rev-parse", "--short", "HEAD" }))
     sh(repo, { "git", "checkout", "-qb", "feature" })
     write(repo .. "/a.txt", "b\n")
-    local res, calls = open_in(repo)
-    eq(0, res.code)
-    truthy(res.stdout:find("needs_ask: true", 1, true), res.stdout)
-    truthy(res.stdout:find("branch_args: " .. base, 1, true), res.stdout)
-    eq("", calls)
+    sh(repo, { "git", "commit", "-qam", "feat" })
+    local head = vim.trim(sh(repo, { "git", "rev-parse", "HEAD" }))
+    local res = open_in(repo, {}, { STUB_GH_PR = "12\tmain\t" .. head .. "\tFix | the thing" })
+    eq({
+      "Everything since main = --base main",
+      "Last commit = HEAD~1",
+      "PR #12: Fix / the thing = --pr 12",
+      "A ref or range = <ref>",
+    }, options(res.stdout))
+    truthy(res.stdout:find("checked out here", 1, true), res.stdout)
+    -- the same PR, but this worktree is somewhere else: read-only
+    sh(repo, { "git", "commit", "-q", "--allow-empty", "-m", "local only" })
+    res = open_in(repo, {}, { STUB_GH_PR = "12\tmain\t" .. head .. "\tFix" })
+    truthy(res.stdout:find("fetched read-only", 1, true), res.stdout)
+  end)
+
+  it("a PR number or URL alone means --pr", function()
+    local repo = repo_with({ ["a.txt"] = "a\n" })
+    local _, calls = open_in(repo, { "#12" })
+    truthy(calls:find("Annodiff --pr 12", 1, true), calls)
+    _, calls = open_in(repo, { "https://github.com/o/r/pull/7" })
+    truthy(calls:find("Annodiff --pr https://github.com/o/r/pull/7", 1, true), calls)
+    _, calls = open_in(repo, { "--base", "stack-1" })
+    truthy(calls:find("Annodiff --base stack-1", 1, true), calls)
   end)
 
   it("passes explicit args through, quoted", function()

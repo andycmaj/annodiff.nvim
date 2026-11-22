@@ -33,6 +33,22 @@ lazy.nvim:
 | `:Annodiff --staged [ref]` | `<ref>` (default `HEAD`) | index |
 | `:Annodiff A..B` | `A` | `B` |
 | `:Annodiff A...B` | merge base of `A` and `B` | `B` |
+| `:Annodiff --base [branch]` | merge base of `branch` and `HEAD` | worktree |
+| `:Annodiff --pr [N\|URL]` | merge base of the PR's base and head | PR head (worktree when checked out) |
+
+`:Annodiff HEAD` is the uncommitted changes, staged and unstaged.
+
+`--base` is everything since the branch forked: its commits plus uncommitted changes.
+Without a branch it is the default branch, picked like Plannotator's review:
+`origin/HEAD`'s target, else `origin/main`, `main`, `origin/master`, `master`. On a
+stacked branch, `--base <the branch below>` shows only this layer.
+
+`--pr` reviews a GitHub pull request the way GitHub diffs it, so line numbers match
+the PR head. It needs `gh`; with no number it is the current branch's PR. Nothing is
+checked out: unless the PR head is this worktree's `HEAD` with a clean tree, annodiff
+fetches `refs/pull/N/head` and the base branch from the remote that points at the PR's
+repo and reads the head commit (read-only, like any range). When the head is checked
+out and clean, the right side is the worktree, so edits show live.
 
 `:AnnodiffClose`, `:AnnodiffRefresh`, `:AnnodiffExport [path]`, `:AnnodiffSend` and
 `:AnnodiffClear[!]` (drop annotations and reviewed marks; `!` skips the prompt)
@@ -222,10 +238,18 @@ From a checkout: `claude --plugin-dir /path/to/annodiff.nvim` (and
 split in a Riker task window, otherwise a new tmux window) and returns at once. Notes you
 send with `\s` (or `O` in the tree, or by closing the review) are pasted into the Claude
 session; Claude answers questions (`??`, explain/what/how/why) and makes the rest as
-changes, which you see live on the worktree side. With no args the review is picked like
-revdiff's `detect-ref.sh`: on main, uncommitted changes (`HEAD`) or the last commit
-(`HEAD~1`); on a clean feature branch, the merge base vs the worktree; on a dirty feature
-branch Claude asks which. "Use my latest annodiff annotations" reads the newest of
+changes, which you see live on the worktree side.
+
+With no args Claude asks which diff to review, offering only what applies:
+
+- everything since the base branch (`--base <branch>`; first on a feature branch),
+- uncommitted changes (`HEAD`), or the last commit (`HEAD~1`) when the tree is clean,
+- a pull request: this branch's PR by number when `gh` finds one, else any PR you name
+  (`--pr N|URL`; a bare `12`, `#12` or PR URL works too),
+- any ref or range you type (`HEAD~3`, `A..B`, `A...B`, `--staged`).
+
+With args (`/annodiff:annodiff --pr 12`) it opens straight away.
+"Use my latest annodiff annotations" reads the newest of
 `.git/annodiff/annotations.md` and this checkout's history entries. An executable
 `$CLAUDE_PLUGIN_DATA/scripts/open.sh` replaces the bundled launcher.
 
@@ -250,7 +274,8 @@ contract as revdiff's: annotations on stdout, exit 10 when there are any).
 - tmux only (revdiff also drives zellij, kitty, wezterm, ghostty, iTerm2 and others).
 - No file-only (`--only`), all-files, `--stdin` patch or `--annotations` preload modes,
   and no explanation loop: annodiff reviews git diffs, and `\c` answers questions in place.
-  For a PR, `gh pr checkout N` and review `base...HEAD`.
+  A PR is reviewed from local git with `--pr` (fetched, not checked out), not from
+  `gh pr diff` piped in; `gh pr checkout N` first if Claude should edit it live.
 - Codex, opencode and pi plugins are not ported.
 
 ## Config
@@ -305,3 +330,7 @@ make test   # nvim --clean --headless -l tests/run.lua
 ```
 
 The end-to-end tests build throwaway git repos and drive the real UI headless.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

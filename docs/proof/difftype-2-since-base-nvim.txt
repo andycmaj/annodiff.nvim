@@ -1,0 +1,22 @@
+    󰈔 [No Name]     ▕     󰌠 app.py                                                                                                                             ▏ 1 ▕▏ 2 ▕ 
+since origin/main (8bedafa) → workt│ 󰈔 1 󰈔 8bedafa5 󰌠 app.py                                          │ 󰌠 app.py 󰊕 def greet
+1 file                             │    1   def greet(name):                                            │    1   def greet(name):
+M app.py                           │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    2 ▎ │   return f"hi {name}"  Not Committed Yet
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    1
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    2
+                                   │        ╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱│    3   def farewell(name):
+                                   │    2       return f"hello {name}"                                  │    4   │   return f"bye {name}"
+                                   │    1                                                               │    5
+                                   │    2                                                               │    6
+                                   │    3   print(greet("world"))                                       │    7   print(greet("world"))
+ NORMAL   feature  app.py  󰌠  app.py                                                                                                    󰌠 python   copilot  22%    2:1  
+❯ /annodiff:annodiff
+  Ran 1 shell command
+⏺ User answered Claude's questions:
+  ⎿  · Which diff should annodiff review? → Everything since origin/main (Recommended)
+  Ran 1 shell command
+⏺ Neovim is open in a new tmux window. It shows everything on feature since origin/main: the 1 commit plus your uncommitted app.py edits, compared against merge base 8bedafa. Annotate a line with \a or a whole file with
+  \A. Send notes here with \s (or O in the tree), or just close the review. \c asks an inline agent without sending anything here.
+✻ Churned for 9s · done 9:24 AM
+                                                                                                                                                                    Update available! Run: brew upgrade claude-code@latest
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

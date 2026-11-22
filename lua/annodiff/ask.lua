@@ -59,6 +59,9 @@ end
 --- What the review covers, in the words revdiff uses.
 ---@param spec annodiff.Spec
 function M.scope(spec)
+  if spec.scope then
+    return spec.scope
+  end
   if spec.left.kind == "rev" and spec.right.kind == "rev" then
     return "git diff of range " .. spec.label
   elseif spec.right.kind == "index" then

@@ -2,8 +2,8 @@
 # Open :Annodiff in Neovim beside the calling Claude pane. Notes sent with \s (or O in
 # the tree), and any unsent notes on close, are pasted back into that pane.
 # usage: open.sh [annodiff args...]
-#   No args: pick the review like revdiff's detect-ref.sh (see detect_args below).
-#   When that is ambiguous, nothing opens and "needs_ask: true" is printed with the choices.
+#   No args: nothing opens; "needs_ask: true" is printed with the kinds of diff that
+#   apply here (see choices below), for the skill to ask which one.
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd -P)" # physical: the skill may be a symlink into this repo
 
@@ -21,47 +21,88 @@ plugin="$(cd "$dir/../../.." && pwd)" # this repo; loaded after the user's confi
 command -v nvim >/dev/null 2>&1 || { echo "error: nvim not found in PATH" >&2; exit 1; }
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "error: not in a git repo" >&2; exit 1; }
 
-# revdiff's detect-ref.sh decision table, in annodiff's terms. annodiff's right side is
-# the worktree unless a range is given, so "uncommitted" is `HEAD` (staged + unstaged)
-# and "branch vs main" is the merge base against the worktree (commits + uncommitted).
-detect_args() {
+# The default branch, as annodiff's --base and Plannotator pick it: origin's default
+# (origin/HEAD) when fetched, else origin/main, main, origin/master, master.
+default_branch() {
+  local ref
+  if ref="$(git -C "$root" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)" \
+    && git -C "$root" show-ref --verify -q "$ref"; then
+    echo "${ref#refs/remotes/}"
+    return
+  fi
+  for ref in refs/remotes/origin/main refs/heads/main refs/remotes/origin/master refs/heads/master; do
+    if git -C "$root" show-ref --verify -q "$ref"; then
+      ref="${ref#refs/remotes/}"
+      echo "${ref#refs/heads/}"
+      return
+    fi
+  done
+}
+
+# No args: nothing opens. Print the kinds of diff that apply here, most likely first,
+# for the skill to ask about (as Plannotator's review offers them):
+#   uncommitted changes (HEAD vs worktree)        open.sh HEAD   (clean tree: the last commit, HEAD~1)
+#   everything since the base branch              open.sh --base <branch>
+#   a pull request (this branch's, or any)        open.sh --pr [N|URL]
+#   any ref or range                              open.sh <ref> | A..B | A...B | --staged
+choices() {
   git -C "$root" rev-parse --verify -q HEAD >/dev/null || { echo "error: no commits yet" >&2; exit 1; }
-  local branch main="" remote_head base dirty=""
+  local branch base="" mb="" ahead=0 dirty="" files pr="" opts=()
   branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
-  if remote_head="$(git -C "$root" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)"; then
-    main="${remote_head##refs/remotes/origin/}"
-  elif git -C "$root" show-ref --verify -q refs/heads/main; then
-    main=main
-  elif git -C "$root" show-ref --verify -q refs/heads/master; then
-    main=master
+  base="$(default_branch)"
+  files="$(git -C "$root" status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
+  [ "$files" -gt 0 ] && dirty=1
+  if [ -n "$base" ] && [ "$branch" != HEAD ] && [ "$branch" != "$base" ] && [ "origin/$branch" != "$base" ] \
+    && mb="$(git -C "$root" merge-base "$base" HEAD 2>/dev/null)"; then
+    ahead="$(git -C "$root" rev-list --count "$mb..HEAD")"
+  else
+    mb=""
   fi
-  [ -n "$(git -C "$root" status --porcelain)" ] && dirty=1
-  if [ -z "$main" ] || [ "$branch" = "$main" ] || [ "$branch" = HEAD ]; then
-    if [ -n "$dirty" ]; then args=(HEAD); else args=(HEAD~1); fi
-    return
+  if [ -n "$mb" ] && { [ "$ahead" -gt 0 ] || [ -n "$dirty" ]; }; then
+    local what="$ahead commit(s) on $branch"
+    [ -n "$dirty" ] && what+=" plus uncommitted changes"
+    [ "$ahead" -eq 0 ] && what="no commits on $branch yet, so the uncommitted changes"
+    opts+=("Everything since $base | --base $base | $what: the merge base $(git -C "$root" rev-parse --short "$mb") vs the worktree")
   fi
-  base="$(git -C "$root" merge-base "$main" HEAD 2>/dev/null \
-    || git -C "$root" merge-base "origin/$main" HEAD 2>/dev/null || true)"
-  if [ -z "$base" ]; then
-    if [ -n "$dirty" ]; then args=(HEAD); else args=(HEAD~1); fi
-    return
+  if [ -n "$dirty" ]; then
+    opts+=("Uncommitted changes | HEAD | $files file(s), staged and unstaged: HEAD vs the worktree")
+  elif git -C "$root" rev-parse --verify -q HEAD~1 >/dev/null; then
+    opts+=("Last commit | HEAD~1 | nothing uncommitted; $(git -C "$root" log -1 --format=%s | tr '|' '/')")
   fi
-  base="$(git -C "$root" rev-parse --short "$base")"
-  if [ -z "$dirty" ]; then
-    args=("$base")
-    return
+  if command -v gh >/dev/null 2>&1; then
+    [ "$branch" != HEAD ] && pr="$(cd "$root" && gh pr view --json number,baseRefName,headRefOid,title \
+      --jq '[.number, .baseRefName, .headRefOid, .title] | @tsv' 2>/dev/null || true)"
+    if [ -n "$pr" ]; then
+      local num pbase phead ptitle where
+      IFS=$'\t' read -r num pbase phead ptitle <<<"$pr"
+      if [ "$phead" = "$(git -C "$root" rev-parse HEAD)" ] && [ -z "$dirty" ]; then
+        where="checked out here, so edits show live"
+      else
+        where="fetched read-only: its pushed head, not this worktree"
+      fi
+      opts+=("PR #$num: $(printf '%s' "$ptitle" | tr '|' '/' | cut -c1-60) | --pr $num | the PR as GitHub shows it, head vs the merge base with $pbase; $where")
+    else
+      opts+=("A pull request | --pr <number or URL> | ask which PR; it is fetched read-only (nothing checked out) and diffed against its base")
+    fi
   fi
-  echo "branch: $branch"
-  echo "main_branch: $main"
+  opts+=("A ref or range | <ref> | ask which: a ref vs the worktree (HEAD~3, main), A..B, A...B, or --staged [ref]")
   echo "needs_ask: true"
-  echo "uncommitted_args: HEAD"
-  echo "branch_args: $base"
-  echo "Feature branch with uncommitted changes: ask whether to review only the uncommitted changes (open.sh HEAD) or the whole branch against $main, uncommitted included (open.sh $base)."
+  echo "branch: $branch"
+  [ -n "$base" ] && echo "base_branch: $base"
+  echo "Ask which diff to review (first option recommended), then run open.sh with the chosen option's args:"
+  local o; for o in "${opts[@]}"; do echo "option: $o"; done
   exit 0
 }
 
 args=("$@")
-[ $# -eq 0 ] && detect_args
+[ $# -eq 0 ] && choices
+# a bare PR number (#12, 12) or PR URL is shorthand for --pr
+if [ $# -eq 1 ] && [[ "$1" =~ ^#?[0-9]+$ || "$1" =~ ^https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+ ]]; then
+  args=(--pr "${1#\#}")
+fi
+case " ${args[*]} " in *" --pr "* | *" --pr="*)
+  command -v gh >/dev/null 2>&1 || { echo "error: --pr needs the GitHub CLI (gh) in PATH" >&2; exit 1; } ;;
+esac
 
 argstr=""; for a in "${args[@]}"; do argstr+=" $(printf '%q' "$a")"; done
 env_prefix="ANNODIFF_SEND_COMMAND=$(printf '%q' "$(printf '%q' "$dir/deliver.sh") $(printf '%q' "$TMUX_PANE")") ANNODIFF_SEND_ON_CLOSE=1"

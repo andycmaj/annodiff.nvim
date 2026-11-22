@@ -1,7 +1,7 @@
 ---
 name: annodiff
 description: Review this branch's diff in Neovim (annodiff.nvim) beside this Claude session; annotations sent with \s (and unsent ones on close) arrive back here as a message. Also reads the latest annodiff annotations for this repo, and answers questions about annodiff's keys and config. Use when the user runs /annodiff, or says "annodiff", "review in annodiff", "review in nvim", "use my latest annodiff annotations", "what did I annotate in annodiff".
-argument-hint: 'optional: annodiff args, e.g. main, HEAD~3, --staged, --inline, main...HEAD (default: picked like revdiff)'
+argument-hint: 'optional: what to review, e.g. HEAD, --base [branch], --pr [N|URL], main...HEAD, --staged, --inline (none: asks)'
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/open.sh:*), Bash(${CLAUDE_SKILL_DIR}/scripts/read-latest.sh:*)
 ---
 
@@ -17,19 +17,26 @@ Arguments: `$ARGUMENTS`
 
 ## Launch
 
-Run, with the arguments as given (none is fine):
+With arguments, run them as given; nothing is asked:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/open.sh [annodiff args]
+${CLAUDE_SKILL_DIR}/scripts/open.sh <annodiff args>
 ```
 
-Annodiff args: `<ref>` (ref vs worktree), `--staged [ref]`, `A..B`, `A...B`, `--inline` / `--split`. With none, `open.sh` picks like revdiff: on the main branch, uncommitted changes (`HEAD`) or else the last commit (`HEAD~1`); on a clean feature branch, the branch against main (merge base vs worktree).
+Annodiff args: `HEAD` (uncommitted: staged + unstaged), `--base [branch]` (everything since the branch forked: merge base vs worktree; default branch when omitted; for a stacked branch, the branch below), `--pr [N|URL]` (a GitHub PR; none means this branch's PR), `<ref>` (ref vs worktree), `A..B`, `A...B`, `--staged [ref]`, plus `--inline` / `--split`. A lone PR number, `#N` or PR URL means `--pr` with it.
+
+With no arguments, run `open.sh` with none. Nothing opens; it prints `needs_ask: true` and one `option: <label> | <args> | <description>` line per kind of diff that applies here, the recommended one first. Ask with AskUserQuestion, one question ("Which diff should annodiff review?"), the options in the order printed: label as label, description as description, `(Recommended)` after the first label. Then:
+
+- An option whose args are complete (`HEAD`, `HEAD~1`, `--base main`, `--pr 12`): run `open.sh <args>`.
+- "A pull request" (`--pr <number or URL>`) or "A ref or range" (`<ref>`): ask in chat which one, unless the user already typed it in "Other", then run `open.sh --pr <it>` or `open.sh <it>`.
+- Free text in "Other": treat it as annodiff args.
+
+After launching:
 
 - Output starts with `error:`: report it and stop.
-- Output contains `needs_ask: true` (feature branch with uncommitted changes): nothing opened yet. Ask with AskUserQuestion: "Uncommitted only" or "Branch vs <main_branch>". Then run `open.sh HEAD` for uncommitted, or `open.sh <branch_args>` for the branch.
-- Otherwise Neovim is open beside this session and does not block. Tell the user in one line: annotate with `\a` (`\A` whole file), send notes here with `\s` (or `O` in the tree, or just close the review), `\c` asks an inline agent without sending anything here. Then end your turn; do not wait or poll.
+- Otherwise Neovim is open beside this session and does not block. Tell the user in one line what it shows and: annotate with `\a` (`\A` whole file), send notes here with `\s` (or `O` in the tree, or just close the review), `\c` asks an inline agent without sending anything here. Then end your turn; do not wait or poll. If the review hits an error (no changes, gh failing, unknown ref), Neovim shows it, not this session.
 
-To review a GitHub PR that is not this branch: `gh pr checkout <N>`, then `open.sh <base>...HEAD`. annodiff reads local git only; it has no patch or `--stdin` mode.
+A PR is never checked out: when its head is not this worktree's clean HEAD, annodiff fetches `refs/pull/N/head` and its base into the object store and shows the PR head read-only, so line numbers match the PR but the right side is not the file on disk. Edit files only if the user asks; to work on the PR, `gh pr checkout <N>` first (ask if the tree is dirty), then review again with `--pr`, which then uses the worktree.
 
 ## When annotations arrive
 

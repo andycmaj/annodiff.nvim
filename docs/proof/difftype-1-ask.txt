@@ -1,0 +1,20 @@
+ ▐▛███▛█   Claude Code v2.1.322
+▝▜██████▀  Opus 5.5 with high effort · Claude Pro
+ ▝▝   ▝▝   /private/tmp/claude-501/-Users-ac-workspace-andycmaj-annodiff-nvim-annodiff-mit-license-pick-diff-type-unco/08118889-db11-4e36-8aad-6db0c9c49801/scratchpad/proof/repo
+❯ /annodiff:annodiff
+  Ran 1 shell command
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Diff
+Which diff should annodiff review?
+❯ 1. Everything since origin/main (Recommended)
+     1 commit(s) on feature plus uncommitted changes: the merge base 8bedafa vs the worktree
+  2. Uncommitted changes
+     1 file(s), staged and unstaged: HEAD vs the worktree
+  3. PR #3: Add farewell(name)
+     the PR as GitHub shows it, head vs the merge base with main; fetched read-only: its pushed head, not this worktree
+  4. A ref or range
+     ask which: a ref vs the worktree (HEAD~3, main), A..B, A...B, or --staged [ref]
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel

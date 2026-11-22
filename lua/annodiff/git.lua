@@ -17,6 +17,11 @@ local M = {}
 ---@field label string
 ---@field merge_base? {from: string, to: string}
 ---@field ref? string the ref / range as typed (revdiff history "refs:")
+---@field mode? "base"|"pr" set by --base / --pr; resolve() fills in the sides
+---@field base? string --base branch (nil: the default branch)
+---@field pr? string --pr number or URL (nil: this branch's PR)
+---@field title? string tree header, when the side names alone say too little
+---@field scope? string what the review covers, for the inline agent's prompt
 
 ---@class annodiff.Entry
 ---@field path string        path on the right side, relative to the repo root
@@ -68,14 +73,50 @@ end
 function M.parse_spec(args)
   local staged = false
   local refs = {}
-  for _, a in ipairs(args or {}) do
+  local mode, mode_arg -- "base" | "pr", with its optional value
+  args = args or {}
+  local i = 1
+  while i <= #args do
+    local a = args[i]
+    local flag, value = a:match("^%-%-(%a+)=(.*)$")
+    flag = flag or a:match("^%-%-(%a+)$")
     if a == "--staged" or a == "--cached" then
       staged = true
+    elseif flag == "base" or flag == "pr" then
+      if mode then
+        return nil, "--" .. mode .. " and --" .. flag .. " cannot be combined"
+      end
+      mode = flag
+      if value then
+        mode_arg = value ~= "" and value or nil
+      elseif args[i + 1] and args[i + 1]:sub(1, 2) ~= "--" then
+        mode_arg = args[i + 1]
+        i = i + 1
+      end
     elseif a:sub(1, 2) == "--" then
       return nil, "unknown option " .. a
     else
       table.insert(refs, a)
     end
+    i = i + 1
+  end
+  if mode then
+    if staged or #refs > 0 then
+      return nil, "--" .. mode .. " takes no other ref or --staged"
+    end
+    if mode == "pr" and mode_arg and not (mode_arg:match("^#?%d+$") or mode_arg:match("^https?://")) then
+      return nil, "--pr wants a PR number or URL, got " .. mode_arg
+    end
+    -- resolve() fills in both sides, the diff args and the label
+    return {
+      mode = mode,
+      base = mode == "base" and mode_arg or nil,
+      pr = mode == "pr" and mode_arg and mode_arg:gsub("^#", "") or nil,
+      left = { kind = "rev" },
+      right = { kind = "worktree" },
+      diff_args = {},
+      label = mode == "pr" and ("PR " .. (mode_arg or "of this branch")) or ("since " .. (mode_arg or "the base branch")),
+    }
   end
   if #refs > 1 then
     return nil, "expected at most one ref or range, got " .. #refs
@@ -135,11 +176,193 @@ function M.parse_spec(args)
   }
 end
 
+local function commit_exists(root, rev)
+  return (M.run(root, { "rev-parse", "--verify", "--quiet", "--end-of-options", rev .. "^{commit}" }))
+end
+
+local function short(root, rev)
+  local ok, out = M.run(root, { "rev-parse", "--short", rev })
+  return ok and vim.trim(out) or rev:sub(1, 8)
+end
+
+--- The branch a feature branch is measured against, as Plannotator picks it: the
+--- remote's default (origin/HEAD) when fetched, else origin/main, main,
+--- origin/master, master. nil when none of them exists.
+---@param root string
+---@return string?
+function M.default_branch(root)
+  local ok, out = M.run(root, { "symbolic-ref", "-q", "refs/remotes/origin/HEAD" })
+  if ok then
+    local ref = vim.trim(out)
+    if M.run(root, { "show-ref", "--verify", "--quiet", ref }) then
+      return (ref:gsub("^refs/remotes/", ""))
+    end
+  end
+  for _, ref in ipairs({ "refs/remotes/origin/main", "refs/heads/main", "refs/remotes/origin/master", "refs/heads/master" }) do
+    if M.run(root, { "show-ref", "--verify", "--quiet", ref }) then
+      return (ref:gsub("^refs/remotes/", ""):gsub("^refs/heads/", ""))
+    end
+  end
+end
+
+--- --base [branch]: everything since the branch forked, the merge base against the
+--- worktree (commits + uncommitted changes), like Plannotator's "since base".
+---@param root string
+---@param spec annodiff.Spec
+---@return annodiff.Spec? spec, string? err
+function M.resolve_base(root, spec)
+  local base = spec.base or M.default_branch(root)
+  if not base then
+    return nil, "no base branch: none of origin/HEAD, main, master exists; pass --base <branch>"
+  end
+  if not commit_exists(root, base) then
+    return nil, "unknown revision: " .. base
+  end
+  local ok, out, err = M.run(root, { "merge-base", "--end-of-options", base, "HEAD" })
+  if not ok then
+    return nil, "no merge base for " .. base .. " and HEAD: " .. vim.trim(err)
+  end
+  local mb = vim.trim(out)
+  spec.left = { kind = "rev", rev = mb }
+  spec.right = { kind = "worktree" }
+  spec.diff_args = { mb }
+  spec.ref = mb
+  spec.label = "since " .. base
+  spec.title = "since " .. base .. " (" .. short(root, mb) .. ") → worktree"
+  spec.scope = "git diff of the working tree against " .. mb .. ", the merge base with " .. base
+  return spec
+end
+
+--- Run gh in the repo. Returns its decoded JSON output.
+---@param root string
+---@param args string[]
+---@return table? data, string? err
+function M.gh_json(root, args)
+  local cmd = vim.list_extend({ "gh" }, args)
+  local ok, res = pcall(function()
+    return vim.system(cmd, { cwd = root, text = true }):wait()
+  end)
+  if not ok then
+    return nil, "gh not found (needed for --pr): " .. tostring(res)
+  end
+  if res.code ~= 0 then
+    return nil, "gh " .. table.concat(args, " ") .. ": " .. vim.trim(res.stderr or "")
+  end
+  local dok, data = pcall(vim.json.decode, res.stdout or "")
+  if not dok or type(data) ~= "table" then
+    return nil, "gh " .. table.concat(args, " ") .. ": unreadable output"
+  end
+  return data
+end
+
+--- The remote whose URL is github's owner/repo; nil when none is.
+---@param root string
+---@param slug string owner/repo
+---@return string?
+function M.remote_for(root, slug)
+  local ok, out = M.run(root, { "remote", "-v" })
+  if not ok then
+    return nil
+  end
+  slug = slug:lower()
+  for line in out:gmatch("[^\n]+") do
+    local name, url = line:match("^(%S+)%s+(%S+)")
+    if url then
+      local path = url:lower():gsub("%.git$", ""):gsub("/$", "")
+      if path:sub(-#slug - 1) == "/" .. slug or path:sub(-#slug - 1) == ":" .. slug then
+        return name
+      end
+    end
+  end
+end
+
+--- --pr [N|URL]: a GitHub pull request, reviewed locally against its own base, the way
+--- GitHub shows it (merge base of base and head ... head), so line numbers match the
+--- PR head. Nothing is checked out: when the PR head is not this worktree's clean HEAD,
+--- its head and base are fetched into the object store (refs/pull/N/head) and the
+--- right side is read from the head commit. When it is, the right side is the
+--- worktree, so edits made during the review show live.
+---@param root string
+---@param spec annodiff.Spec
+---@return annodiff.Spec? spec, string? err
+function M.resolve_pr(root, spec)
+  local args = { "pr", "view" }
+  if spec.pr then
+    table.insert(args, spec.pr)
+  end
+  vim.list_extend(args, { "--json", "number,url,title,headRefOid,baseRefName,baseRefOid" })
+  local pr, err = M.gh_json(root, args)
+  if not pr then
+    return nil, spec.pr and err or ("no PR for this branch (" .. err .. ")")
+  end
+  local slug = type(pr.url) == "string" and pr.url:match("^https?://[^/]+/([^/]+/[^/]+)/pull/%d+")
+  if not slug or type(pr.headRefOid) ~= "string" or type(pr.baseRefOid) ~= "string" then
+    return nil, "unexpected PR url: " .. tostring(pr.url)
+  end
+  if not (commit_exists(root, pr.headRefOid) and commit_exists(root, pr.baseRefOid)) then
+    local remote = M.remote_for(root, slug)
+    if not remote then
+      return nil, ("PR #%d is in %s, and no remote of this repo points there"):format(pr.number, slug)
+    end
+    local fok, _, ferr = M.run(root, {
+      "fetch", "--no-tags", "--quiet", remote,
+      ("refs/pull/%d/head"):format(pr.number),
+      "refs/heads/" .. pr.baseRefName,
+    })
+    if not fok then
+      return nil, ("fetching PR #%d from %s: %s"):format(pr.number, remote, vim.trim(ferr))
+    end
+    if not (commit_exists(root, pr.headRefOid) and commit_exists(root, pr.baseRefOid)) then
+      return nil, ("PR #%d moved while fetching; run it again"):format(pr.number)
+    end
+  end
+  local ok, out, merr = M.run(root, { "merge-base", pr.baseRefOid, pr.headRefOid })
+  if not ok then
+    return nil, ("no merge base for PR #%d: %s"):format(pr.number, vim.trim(merr))
+  end
+  local mb = vim.trim(out)
+  local _, head = M.run(root, { "rev-parse", "--verify", "--quiet", "HEAD" })
+  local _, status = M.run(root, { "status", "--porcelain", "--untracked-files=no" })
+  local live = vim.trim(head) == pr.headRefOid and vim.trim(status) == ""
+  spec.left = { kind = "rev", rev = mb }
+  if live then
+    spec.right = { kind = "worktree" }
+    spec.diff_args = { mb }
+  else
+    spec.right = { kind = "rev", rev = pr.headRefOid }
+    spec.diff_args = { mb, pr.headRefOid }
+  end
+  spec.ref = mb .. "..." .. pr.headRefOid
+  spec.label = ("PR #%d"):format(pr.number)
+  spec.title = ("PR #%d %s → %s%s"):format(
+    pr.number,
+    pr.baseRefName,
+    short(root, pr.headRefOid),
+    live and " (checked out)" or ""
+  )
+  spec.scope = ("GitHub pull request #%d (%s) %q: head %s against the merge base %s with its base branch %s%s"):format(
+    pr.number,
+    pr.url,
+    pr.title or "",
+    pr.headRefOid,
+    mb,
+    pr.baseRefName,
+    live and "; the head is checked out here, so the right side is the working tree"
+      or "; the head is not checked out here, so files on disk may differ from the reviewed lines"
+  )
+  return spec
+end
+
 --- Validate revisions and resolve the merge base for A...B.
 ---@param root string
 ---@param spec annodiff.Spec
 ---@return annodiff.Spec? spec, string? err
 function M.resolve(root, spec)
+  if spec.mode == "base" then
+    return M.resolve_base(root, spec)
+  elseif spec.mode == "pr" then
+    return M.resolve_pr(root, spec)
+  end
   for _, side in ipairs({ spec.left, spec.right }) do
     if side.kind == "rev" then
       local ok = M.run(root, { "rev-parse", "--verify", "--quiet", side.rev .. "^{commit}" })

@@ -1,0 +1,13 @@
+PR #3 main → 25cbdcd               │ 󰈔 1 󰈔 8bedafa5  README.md 󰉫 app                                │ 󰈔 1 󰈔 25cbdcdd  README.md 󰉫 app
+2 files                            │    2   # app                                                       │    2   # app
+M README.md                        │    1                                                               │    1
+M app.py                           │    3   Says hello.                                                 │    3   Says hello and bye.
+ NORMAL  README.md [-]    annodiff:/…/25cbdcdd/README.md 󰌾                                                                                        markdown  Bot    3:1  
+  Ran 1 shell command
+⏺ I opened PR #3 ("Add farewell(name)") in a new tmux window. It shows the PR head against its merge base with main. Your worktree has uncommitted changes, so the right side is the pushed PR head, read-only, not app.py
+  on disk.
+  To annotate, press \a on a line or \A for a whole file. Send notes here with \s (or O in the tree), or close the review. \c asks an inline agent without sending anything here.
+  The two earlier reviews (--base origin/main and HEAD) may still be open in their own windows.
+✻ Cooked for 8s · done 9:25 AM
+                                                                                                                                                                    Update available! Run: brew upgrade claude-code@latest
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
