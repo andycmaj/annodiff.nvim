@@ -9,6 +9,11 @@ per review and follow the code when it moves. Send them to an agent, or ask
 a read-only agent about a line and read the answer in place (see
 [docs/plan.md](docs/plan.md)).
 
+![Split layout: changed-file tree, old and new sides in diff mode, annotations under the lines they belong to](docs/images/split.png)
+
+*Split layout: the changed-file tree beside old and new in diff mode, with
+annotations drawn under their lines.*
+
 Neovim 0.10+, no dependencies.
 
 ## Install
@@ -33,6 +38,10 @@ lazy.nvim:
 `:AnnodiffClear[!]` (drop annotations and reviewed marks; `!` skips the prompt)
 act on the review in the current tab.
 Each review opens in its own tab: `tree | old | new`.
+
+<img src="docs/images/tree.png" width="228" alt="File tree: status letters, reviewed marks and annotation counts">
+
+*The tree: git status per file, `✓` for reviewed files, `[N]` annotations.*
 
 ### Layouts
 
@@ -64,6 +73,11 @@ can't sit on a ghost row, `\a`, `\c` and `\d` on a line with ghost rows above
 it open a picker: the line itself, each removed line, or the whole removed
 block. Notes on removed lines keep their old-side numbers, so the export is
 the same in both layouts.
+
+![Inline layout: removed lines as ghost rows, an annotation and an agent answer under the changed block](docs/images/inline.png)
+
+*Inline layout: removed lines as ghost rows above their replacement, a range
+annotation, and an agent's answer to `\c` streamed in under the block.*
 
 ### Keys
 
