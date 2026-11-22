@@ -1,0 +1,10 @@
+{
+  "name": "annodiff",
+  "version": "0.1.0",
+  "description": "Review this branch's diff in Neovim (annodiff.nvim) beside Claude; annotations come back to the session as a message",
+  "author": {
+    "name": "andycmaj"
+  },
+  "repository": "https://github.com/andycmaj/annodiff.nvim",
+  "keywords": ["code-review", "diff", "annotations", "neovim"]
+}

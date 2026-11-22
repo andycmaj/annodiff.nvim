@@ -139,11 +139,7 @@ The command comes from `send_command` in `setup()`, then
 `send_on_close = true` (or `$ANNODIFF_SEND_ON_CLOSE=1`) closing the review or
 quitting Neovim sends the set again if it changed since the last send.
 
-`skills/annodiff/` is a Claude Code skill (`/annodiff`) built on that: it opens
-the review in Neovim beside the Claude pane (a zoomed aug split, or a tmux
-window) and pastes sent notes back into the Claude session, like the revdiff
-`/revdiff` skill. Install it with
-`ln -s "$PWD/skills/annodiff" ~/.claude/skills/annodiff`.
+The `/annodiff` Claude Code skill is built on that; see [Claude Code](#claude-code).
 
 ### Asking an agent inline
 
@@ -203,6 +199,59 @@ produces for the same records.
 
 Revision and index sides are read-only scratch buffers. Added and deleted files
 show an empty side; binary files show a placeholder.
+
+## Claude Code
+
+A Claude Code plugin marketplace, mirroring revdiff's: a review skill (`annodiff`) and
+an optional plan-review hook (`annodiff-planning`). Needs tmux, Neovim 0.10+ and git;
+the hook also needs python3.
+
+```text
+/plugin marketplace add andycmaj/annodiff.nvim
+/plugin install annodiff@annodiff
+/plugin install annodiff-planning@annodiff   # optional: review plans before they run
+```
+
+From a checkout: `claude --plugin-dir /path/to/annodiff.nvim` (and
+`--plugin-dir /path/to/annodiff.nvim/plugins/annodiff-planning`), or link the skill:
+`ln -s "$PWD/skills/annodiff" ~/.claude/skills/annodiff`.
+
+### `/annodiff` (review skill)
+
+`/annodiff:annodiff [annodiff args]` opens `:Annodiff` beside the Claude pane (a zoomed
+split in a Riker task window, otherwise a new tmux window) and returns at once. Notes you
+send with `\s` (or `O` in the tree, or by closing the review) are pasted into the Claude
+session; Claude answers questions (`??`, explain/what/how/why) and makes the rest as
+changes, which you see live on the worktree side. With no args the review is picked like
+revdiff's `detect-ref.sh`: on main, uncommitted changes (`HEAD`) or the last commit
+(`HEAD~1`); on a clean feature branch, the merge base vs the worktree; on a dirty feature
+branch Claude asks which. "Use my latest annodiff annotations" reads the newest of
+`.git/annodiff/annotations.md` and this checkout's history entries. An executable
+`$CLAUDE_PLUGIN_DATA/scripts/open.sh` replaces the bundled launcher.
+
+### Plan review (`annodiff-planning`)
+
+A `PreToolUse` hook on `ExitPlanMode`. Each session gets a plan repo
+(`$TMPDIR/annodiff-plan-<session>/`) whose HEAD is the previous revision of `plan.md`; the
+review is `:Annodiff HEAD`, blocking until you quit Neovim. The first round shows the whole
+plan, later rounds only what changed. Annotations, and any edits you make to `plan.md`,
+go back as the denial reason and Claude revises the plan; quitting without notes gives
+Claude Code's normal plan prompt. Failures (no tmux, no nvim) fail open. Override the
+launcher with an executable `$CLAUDE_PLUGIN_DATA/scripts/launch-plan-review.sh` (same
+contract as revdiff's: annotations on stdout, exit 10 when there are any).
+
+### Differences from revdiff's plugin
+
+- The review does not block Claude: notes are pushed into the session as they are sent
+  (revdiff's skill waits on the TUI and reads its stdout). Claude makes changes directly
+  instead of entering plan mode, since the worktree side shows them live.
+- Plan rounds are chained by the session id, not by a marker the agent has to copy into
+  its next plan, and no agent-supplied path is read.
+- tmux only (revdiff also drives zellij, kitty, wezterm, ghostty, iTerm2 and others).
+- No file-only (`--only`), all-files, `--stdin` patch or `--annotations` preload modes,
+  and no explanation loop: annodiff reviews git diffs, and `\c` answers questions in place.
+  For a PR, `gh pr checkout N` and review `base...HEAD`.
+- Codex, opencode and pi plugins are not ported.
 
 ## Config
 

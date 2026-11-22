@@ -1,0 +1,10 @@
+    󰈔 [No Name]     ▕     󰍔 plan.md                                                                                                                            ▏ 1 ▕▏ 2 ▕ 
+HEAD → worktree                    │ 󰈔 1 󰈔 HEAD 󰍔 plan.md 󰉫 Plan: add farewell(name) to app.py       │ 󰍔 plan.md 󰉫 Plan: add farewell(name) to app.py
+1 file                             │    3   # Plan: add farewell(name) to app.py                        │    3   # Plan: add farewell(name) to app.py
+M plan.md                          │    2                                                               │    2
+                                   │    1   1. Context: app.py has greet(name) returning f"hello {name}"│    1   1. Context: app.py has greet(name) returning f"hello {name}",
+                                   │    4   2. Add def farewell(name): return "bye " + name after greet,│    4 ▎ 2. Add `def farewell(name): return f"bye {name}"` (f-string,
+                                   │    1   3. Leave existing greet and print call untouched.           │    1   3. Leave existing greet and print call untouched.
+                                   │    2   4. Verify: python app.py still prints hello world; python -c│    2   4. Verify: python app.py still prints hello world; python -c
+                                   │                                                                    │
+                                   │                                                                    │
