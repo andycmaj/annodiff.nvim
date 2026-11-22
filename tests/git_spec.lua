@@ -1,0 +1,97 @@
+local git = require("annodiff.git")
+
+describe("parse_spec", function()
+  it("no args: index vs worktree", function()
+    local spec = git.parse_spec({})
+    eq({ kind = "index" }, spec.left)
+    eq({ kind = "worktree" }, spec.right)
+    eq({}, spec.diff_args)
+  end)
+
+  it("ref: ref vs worktree", function()
+    local spec = git.parse_spec({ "main" })
+    eq({ kind = "rev", rev = "main" }, spec.left)
+    eq({ kind = "worktree" }, spec.right)
+    eq({ "main" }, spec.diff_args)
+  end)
+
+  it("--staged: HEAD vs index", function()
+    local spec = git.parse_spec({ "--staged" })
+    eq({ kind = "rev", rev = "HEAD" }, spec.left)
+    eq({ kind = "index" }, spec.right)
+    eq({ "--cached" }, spec.diff_args)
+  end)
+
+  it("--staged ref", function()
+    local spec = git.parse_spec({ "--staged", "v1" })
+    eq({ kind = "rev", rev = "v1" }, spec.left)
+    eq({ "--cached", "v1" }, spec.diff_args)
+  end)
+
+  it("two-dot range, empty end means HEAD", function()
+    local spec = git.parse_spec({ "main.." })
+    eq({ kind = "rev", rev = "main" }, spec.left)
+    eq({ kind = "rev", rev = "HEAD" }, spec.right)
+    eq({ "main.." }, spec.diff_args)
+    eq(nil, spec.merge_base)
+  end)
+
+  it("three-dot range asks for a merge base", function()
+    local spec = git.parse_spec({ "main...feature" })
+    eq({ from = "main", to = "feature" }, spec.merge_base)
+    eq({ kind = "rev", rev = "feature" }, spec.right)
+  end)
+
+  it("rejects bad input", function()
+    eq(nil, (git.parse_spec({ "a", "b" })))
+    eq(nil, (git.parse_spec({ "--staged", "a..b" })))
+    eq(nil, (git.parse_spec({ "--bogus" })))
+  end)
+end)
+
+describe("parse_name_status", function()
+  it("parses statuses, renames and copies", function()
+    local out = table.concat({ "M", "a.lua", "R087", "old/x.lua", "new/x.lua", "A", "b c.txt", "C100", "s", "t", "D", "gone" }, "\0")
+      .. "\0"
+    eq({
+      { path = "a.lua", status = "M" },
+      { path = "new/x.lua", old_path = "old/x.lua", status = "R" },
+      { path = "b c.txt", status = "A" },
+      { path = "t", old_path = "s", status = "C" },
+      { path = "gone", status = "D" },
+    }, git.parse_name_status(out))
+  end)
+
+  it("empty output", function()
+    eq({}, git.parse_name_status(""))
+  end)
+end)
+
+describe("to_lines", function()
+  it("drops the trailing newline", function()
+    eq({ { "a", "b" }, false }, { git.to_lines("a\nb\n") })
+  end)
+  it("keeps a missing final newline", function()
+    eq({ { "a", "b" }, false }, { git.to_lines("a\nb") })
+  end)
+  it("strips CR when every line has one", function()
+    eq({ { "a", "b" }, false }, { git.to_lines("a\r\nb\r\n") })
+  end)
+  it("keeps CR when mixed", function()
+    eq({ { "a\r", "b" }, false }, { git.to_lines("a\r\nb\n") })
+  end)
+  it("flags binary content", function()
+    eq({ {}, true }, { git.to_lines("PNG\0\1\2") })
+  end)
+  it("empty file", function()
+    eq({ {}, false }, { git.to_lines("") })
+  end)
+end)
+
+describe("side_label", function()
+  it("shortens full hashes only", function()
+    eq("main", git.side_label({ kind = "rev", rev = "main" }))
+    eq("0123abcd", git.side_label({ kind = "rev", rev = string.rep("0123abcd", 5) }))
+    eq("index", git.side_label({ kind = "index" }))
+  end)
+end)
