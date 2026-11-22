@@ -80,8 +80,19 @@ closing any of the three windows ends the review.
    `.git/annodiff/annotations.md`, also written on close), checked
    byte-identical against revdiff's Go `Parse` + `FormatOutput`. Store is
    in memory per review; loading it back is slice 3.
-3. **Slice 3: persistence + re-anchoring** in `.git/annodiff/`, reviewed marks
-   in the tree, tree filter, history markdown.
+3. **Slice 3: persistence + re-anchoring (done).** JSON per review at
+   `.git/annodiff/reviews/<label>.json` (records + anchor text + reviewed
+   paths), written on every change, restored on open. Re-anchoring on first
+   draw of each file: same line, else nearest line with the anchor text; new
+   side records are reclassified (`+` may now be context); not found =
+   orphan, kept and flagged, never moved by later syncs. Reviewed marks
+   (`<Space>` in the tree as in revdiff, `\r` in diff windows), tree filters
+   `f` (annotated) / `F` (unreviewed) as in revdiff, `<Tab>` skips hidden
+   files. History in revdiff's exact layout and directory
+   (`$REVDIFF_HISTORY_DIR` or `~/.config/revdiff/history/<repo>/`) so the
+   revdiff skill's `read-latest-history.sh` returns annodiff reviews;
+   checked live. `:AnnodiffClear[!]`. Later: reset a reviewed mark when the
+   file's diff changes after it was marked.
 4. **Slice 4: agent.** 4a `:AnnodiffSend` (export on stdin to a configured
    command, e.g. the aug / Claude handoff). 4b ask on a line/range with
    `claude -p`, answer inline as an `answer` annotation.
@@ -100,7 +111,8 @@ lua/annodiff/tree.lua    build + render file tree (pure, unit-tested)
 lua/annodiff/view.lua    sessions, tab layout, diff windows, navigation
 lua/annodiff/hunks.lua   line classification (+ / - / context), counterpart rows (pure)
 lua/annodiff/annotations.lua  store, revdiff ## format + parse (pure)
-lua/annodiff/annotate.lua     float input, extmarks, padding, picker, jumps, export
+lua/annodiff/annotate.lua     float input, extmarks, padding, picker, jumps, export, re-anchoring
+lua/annodiff/persist.lua      review state JSON, atomic writes, revdiff history entries
 tests/                   dependency-free runner: nvim --clean --headless -l tests/run.lua
 ```
 

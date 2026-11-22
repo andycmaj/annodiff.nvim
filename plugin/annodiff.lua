@@ -33,3 +33,7 @@ end, { desc = "Reload the changed-file list of the review in this tab" })
 vim.api.nvim_create_user_command("AnnodiffExport", function(cmd)
   require("annodiff").export(cmd.args)
 end, { nargs = "?", complete = "file", desc = "Write annotations in revdiff ## format" })
+
+vim.api.nvim_create_user_command("AnnodiffClear", function(cmd)
+  require("annodiff").clear(cmd.bang)
+end, { bang = true, desc = "Delete this review's annotations and reviewed marks (! skips the prompt)" })

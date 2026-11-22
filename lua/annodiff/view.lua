@@ -3,6 +3,7 @@ local config = require("annodiff.config")
 local git = require("annodiff.git")
 local tree = require("annodiff.tree")
 local annotate = require("annodiff.annotate")
+local persist = require("annodiff.persist")
 
 local api = vim.api
 local M = {}
@@ -114,6 +115,11 @@ local function nav_maps(s, buf, opts)
   map(km.prev_annotation, function()
     annotate.step(s, -1)
   end, "previous annotation")
+  if not opts.tree then
+    map(km.toggle_reviewed, function()
+      M.toggle_reviewed(s, s.current)
+    end, "toggle reviewed")
+  end
 end
 
 local function diff_maps(s, buf)
@@ -170,6 +176,7 @@ local function unmap_real(s)
     "list_annotations",
     "next_annotation",
     "prev_annotation",
+    "toggle_reviewed",
   }) do
     each_lhs(km[key], function(l)
       pcall(vim.keymap.del, "n", l, { buffer = buf })
@@ -214,6 +221,24 @@ end
 
 -- Tree ---------------------------------------------------------------------
 
+--- Paths the tree filter hides (the open file always stays).
+---@param s annodiff.Session
+---@return table<string, boolean>
+function M.hidden(s)
+  local hidden = {}
+  if not s.filter then
+    return hidden
+  end
+  for i, e in ipairs(s.files) do
+    local keep = (s.filter == "annotated" and s.store:count(e.path) > 0)
+      or (s.filter == "unreviewed" and not s.reviewed[e.path])
+    if not keep and i ~= s.current then
+      hidden[e.path] = true
+    end
+  end
+  return hidden
+end
+
 ---@param s annodiff.Session
 function M.render_tree(s)
   local header = git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right)
@@ -221,11 +246,24 @@ function M.render_tree(s)
   for _, file in ipairs(s.store:files()) do
     counts[file] = s.store:count(file)
   end
+  local reviewed = 0
+  for _, e in ipairs(s.files) do
+    if s.reviewed[e.path] then
+      reviewed = reviewed + 1
+    end
+  end
+  local summary = reviewed > 0 and (" · %d reviewed"):format(reviewed) or ""
+  if s.filter then
+    summary = summary .. " · only " .. s.filter
+  end
   local lines, map, hls = tree.render(s.tree_root, s.files, {
     header = header,
     collapsed = s.collapsed,
     current = s.current,
     counts = counts,
+    reviewed = s.reviewed,
+    hidden = M.hidden(s),
+    summary = summary,
   })
   s.map = map
   local buf = s.buf_tree
@@ -290,7 +328,24 @@ local function setup_tree(s)
   api.nvim_win_set_width(s.win_tree, config.options.tree_width)
 
   local km = config.options.keymaps
-  nav_maps(s, buf, { close = true })
+  nav_maps(s, buf, { close = true, tree = true })
+  local function tmap(lhs, fn, desc)
+    each_lhs(lhs, function(l)
+      vim.keymap.set("n", l, fn, { buffer = buf, nowait = true, silent = true, desc = "annodiff: " .. desc })
+    end)
+  end
+  tmap(km.tree_toggle_reviewed, function()
+    local item = s.map[api.nvim_win_get_cursor(s.win_tree)[1]]
+    if item and item.kind == "file" then
+      M.toggle_reviewed(s, item.index)
+    end
+  end, "toggle reviewed")
+  tmap(km.filter_annotated, function()
+    M.set_filter(s, "annotated")
+  end, "show only annotated files")
+  tmap(km.filter_unreviewed, function()
+    M.set_filter(s, "unreviewed")
+  end, "show only unreviewed files")
   each_lhs(km.select, function(l)
     vim.keymap.set("n", l, function()
       tree_select(s)
@@ -368,6 +423,7 @@ function M.open_file(s, index, opts)
 
   api.nvim_set_current_tabpage(s.tab)
   annotate.sync(s)
+  annotate.save(s)
   annotate.clear(s)
   vim.cmd("diffoff!")
   unmap_real(s)
@@ -448,12 +504,49 @@ function M.step_file(s, delta, hunk)
   if #s.files == 0 then
     return
   end
-  local target = (s.current or 0) + delta
-  if target < 1 or target > #s.files then
+  local hidden = M.hidden(s)
+  local step = delta > 0 and 1 or -1
+  local target = s.current or 0
+  for _ = 1, math.abs(delta) do
+    local next_target = target + step
+    while s.files[next_target] and hidden[s.files[next_target].path] do
+      next_target = next_target + step
+    end
+    if not s.files[next_target] then
+      break
+    end
+    target = next_target
+  end
+  if target == (s.current or 0) or target < 1 then
     notify(delta > 0 and "last file" or "first file")
     return
   end
   M.open_file(s, target, { focus = focused_side(s), hunk = hunk })
+end
+
+--- Toggle the reviewed mark of a file (revdiff <Space>).
+---@param s annodiff.Session
+---@param index? integer
+function M.toggle_reviewed(s, index)
+  local e = index and s.files[index]
+  if not e then
+    return
+  end
+  s.reviewed[e.path] = not s.reviewed[e.path] or nil
+  M.render_tree(s)
+  annotate.save(s)
+end
+
+--- Toggle a tree filter ("annotated" / "unreviewed"); the same one again clears it.
+---@param s annodiff.Session
+---@param kind "annotated"|"unreviewed"
+function M.set_filter(s, kind)
+  s.filter = s.filter ~= kind and kind or nil
+  M.render_tree(s)
+  local row = s.current and tree_line_of(s, s.current)
+  if row then
+    api.nvim_win_set_cursor(s.win_tree, { row, 0 })
+  end
 end
 
 --- Native ]c / [c, then on to the adjacent file at the first / last hunk.
@@ -487,10 +580,32 @@ function M.close(s)
   end
   s.closing = true
   sessions[s.tab] = nil
+  if s.store then
+    annotate.sync(s)
+    annotate.save(s)
+  end
   if s.store and s.store:count() > 0 then
     local path = annotate.export(s)
-    if path then
-      notify(("%d annotation(s) saved to %s"):format(s.store:count(), path))
+    local msg = path and ("%d annotation(s) saved to %s"):format(s.store:count(), path)
+    if config.options.history then
+      local files = vim.tbl_filter(function(f)
+        return f ~= ""
+      end, s.store:files())
+      local hist, herr = persist.save_history({
+        root = s.root,
+        ref = s.spec.ref,
+        diff_args = s.spec.diff_args,
+        annotations = s.store:format(),
+        files = files,
+      }, config.options.history_dir)
+      if hist then
+        msg = (msg or "annotations") .. "; history " .. hist
+      elseif herr then
+        notify("history not written: " .. tostring(herr), vim.log.levels.WARN)
+      end
+    end
+    if msg then
+      notify(msg)
     end
   end
   annotate.clear(s)
@@ -562,6 +677,23 @@ function M.export_current(path)
   return written
 end
 
+--- Drop this review's annotations and reviewed marks, on screen and on disk.
+function M.clear_current(force)
+  local s = M.current()
+  if not s then
+    notify("no review in this tab", vim.log.levels.WARN)
+    return
+  end
+  local n = s.store:count()
+  if not force and vim.fn.confirm(("Delete %d annotation(s) and reviewed marks?"):format(n), "&Yes\n&No", 2) ~= 1 then
+    return
+  end
+  s.store:clear()
+  s.reviewed = {}
+  annotate.changed(s)
+  notify(("cleared %d annotation(s)"):format(n))
+end
+
 function M.refresh_current()
   local s = M.current()
   if not s then
@@ -613,6 +745,7 @@ function M.open(args)
   }
   s.tree_root, s.files = tree.build(entries)
   annotate.new_store(s)
+  local restored = annotate.restore(s)
   vim.cmd("leftabove vsplit")
   s.win_old = api.nvim_get_current_win()
   vim.cmd("topleft vsplit")
@@ -644,6 +777,9 @@ function M.open(args)
 
   sessions[s.tab] = s
   M.open_file(s, 1, { focus = "new" })
+  if restored > 0 then
+    notify(("restored %d annotation(s)"):format(restored))
+  end
   -- equalize the two diff windows, keep the tree at its width
   vim.cmd("wincmd =")
   api.nvim_win_set_width(s.win_tree, config.options.tree_width)

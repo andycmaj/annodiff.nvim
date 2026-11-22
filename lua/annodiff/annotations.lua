@@ -12,6 +12,9 @@ local M = {}
 ---@field type string
 ---@field text string
 ---@field seq? integer insertion order, keeps sorting stable
+---@field anchor? string text of the annotated line, for re-anchoring after the code moves
+---@field orphan? boolean anchor text no longer found
+---@field pending? boolean loaded from disk, not yet re-anchored
 
 ---@class annodiff.Store
 ---@field by_file table<string, annodiff.Annotation[]>
@@ -41,10 +44,20 @@ function Store:add(a)
   if existing then
     existing.text = a.text
     existing.end_line = a.end_line
+    existing.anchor = a.anchor or existing.anchor
     return existing
   end
   self.seq = self.seq + 1
-  local rec = { file = a.file, line = a.line, end_line = a.end_line, type = a.type, text = a.text, seq = self.seq }
+  local rec = {
+    file = a.file,
+    line = a.line,
+    end_line = a.end_line,
+    type = a.type,
+    text = a.text,
+    anchor = a.anchor,
+    orphan = a.orphan,
+    seq = self.seq,
+  }
   self.by_file[a.file] = self.by_file[a.file] or {}
   table.insert(self.by_file[a.file], rec)
   return rec
@@ -74,6 +87,10 @@ function Store:get(file)
     return x.seq < y.seq
   end)
   return list
+end
+
+function Store:clear()
+  self.by_file = {}
 end
 
 ---@return string[]

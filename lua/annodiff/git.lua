@@ -16,6 +16,7 @@ local M = {}
 ---@field diff_args string[]
 ---@field label string
 ---@field merge_base? {from: string, to: string}
+---@field ref? string the ref / range as typed (revdiff history "refs:")
 
 ---@class annodiff.Entry
 ---@field path string        path on the right side, relative to the repo root
@@ -93,6 +94,7 @@ function M.parse_spec(args)
       right = { kind = "rev", rev = to },
       diff_args = { ref },
       label = ref,
+      ref = ref,
     }
     if dots == "..." then
       spec.merge_base = { from = from, to = to }
@@ -111,6 +113,7 @@ function M.parse_spec(args)
       right = { kind = "index" },
       diff_args = diff_args,
       label = base .. " → index",
+      ref = ref,
     }
   end
 
@@ -120,6 +123,7 @@ function M.parse_spec(args)
       right = { kind = "worktree" },
       diff_args = { ref },
       label = ref .. " → worktree",
+      ref = ref,
     }
   end
 

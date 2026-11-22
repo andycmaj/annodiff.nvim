@@ -10,6 +10,8 @@ vim.env.GIT_CONFIG_GLOBAL = "/dev/null"
 vim.env.GIT_CONFIG_NOSYSTEM = "1"
 vim.env.GIT_AUTHOR_NAME, vim.env.GIT_AUTHOR_EMAIL = "test", "test@example.com"
 vim.env.GIT_COMMITTER_NAME, vim.env.GIT_COMMITTER_EMAIL = "test", "test@example.com"
+-- Never write review history into the owner's real revdiff history dir.
+vim.env.REVDIFF_HISTORY_DIR = vim.fn.tempname()
 
 local results = { pass = 0, fail = 0 }
 local prefix = {}

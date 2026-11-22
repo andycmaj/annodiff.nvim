@@ -1,7 +1,7 @@
 -- Annotations in a review: input float, extmarks + virt_lines, list, jumps, export.
 local annotations = require("annodiff.annotations")
-local git = require("annodiff.git")
 local hunks = require("annodiff.hunks")
+local persist = require("annodiff.persist")
 
 local api = vim.api
 local M = {}
@@ -19,6 +19,8 @@ function M.define_highlights()
     AnnodiffAnnotationHeader = "DiagnosticInfo",
     AnnodiffAnnotationCount = "DiagnosticInfo",
     AnnodiffAnnotationPad = "NonText",
+    AnnodiffOrphan = "DiagnosticWarn",
+    AnnodiffReviewed = "DiagnosticOk",
   }
   for group, link in pairs(links) do
     api.nvim_set_hl(0, group, { link = link, default = true })
@@ -80,10 +82,13 @@ end
 function M.sync(s)
   for _, m in ipairs(s.marks or {}) do
     local a = m.annotation
-    if a.line > 0 and api.nvim_buf_is_valid(m.buf) then
+    -- orphans and marks drawn at a clamped row are not where the record says:
+    -- reading them back would rewrite the record with an unrelated line
+    if a.line > 0 and not a.orphan and not m.clamped and api.nvim_buf_is_valid(m.buf) then
       local pos = api.nvim_buf_get_extmark_by_id(m.buf, M.ns, m.id, { details = true })
       if pos[1] and not (pos[3] and pos[3].invalid) then
         local line = pos[1] + 1
+        a.anchor = api.nvim_buf_get_lines(m.buf, pos[1], pos[1] + 1, false)[1] or a.anchor
         if line ~= a.line then
           local existing = s.store:find(a.file, line, a.type)
           if not existing or existing == a then
@@ -103,6 +108,9 @@ local function virt_lines(a)
   local label = a.line == 0 and "file" or (a.end_line and ("lines %d-%d"):format(a.line, a.end_line)) or nil
   for i, text in ipairs(vim.split(a.text, "\n", { plain = true })) do
     local chunks = { { "  ▍ ", "AnnodiffAnnotationSign" } }
+    if i == 1 and a.orphan then
+      table.insert(chunks, { "orphaned, was here: ", "AnnodiffOrphan" })
+    end
     if i == 1 and label then
       table.insert(chunks, { label .. ": ", "AnnodiffAnnotationHeader" })
     end
@@ -139,6 +147,63 @@ local function pad(s, h, side, line, height)
   track(s, buf)
 end
 
+--- Records loaded from disk point at the line where they were saved. Find
+--- their anchor text again: same line, else the nearest line with that text.
+--- New-side records are reclassified ("+" may have become context). Not found
+--- means orphaned: kept, drawn at the old line, flagged.
+---@param s annodiff.Session
+---@param h? annodiff.Hunk[]
+function M.reanchor(s, h)
+  local e = entry(s)
+  for _, a in ipairs(s.store:get(e.path)) do
+    if a.pending then
+      a.pending = nil
+      if a.line > 0 and a.anchor then
+        local side = a.type == "-" and "old" or "new"
+        local lines = lines_of(side == "old" and s.win_old or s.win_new)
+        local found
+        if lines[a.line] == a.anchor then
+          found = a.line
+        else
+          for d = 1, #lines do
+            if lines[a.line - d] == a.anchor then
+              found = a.line - d
+              break
+            elseif lines[a.line + d] == a.anchor then
+              found = a.line + d
+              break
+            end
+          end
+        end
+        if found then
+          if a.end_line then
+            a.end_line = a.end_line + (found - a.line)
+          end
+          a.line = found
+          a.orphan = nil
+          if side == "new" and h then
+            a.type = hunks.classify(h, "new", found)
+          end
+        else
+          a.orphan = true
+        end
+      end
+    end
+  end
+end
+
+--- Write the review state (annotations + reviewed files) to .git/annodiff/reviews/.
+---@param s annodiff.Session
+function M.save(s)
+  if not s.state_path then
+    return
+  end
+  local ok, err = persist.write_atomic(s.state_path, persist.encode(s.store, s.reviewed or {}, s.spec.label))
+  if not ok then
+    notify("could not save review state: " .. tostring(err), vim.log.levels.ERROR)
+  end
+end
+
 --- Draw the open file's annotations: a tracking mark with the sign on the
 --- first line (spanning the range), the text below the last line.
 ---@param s annodiff.Session
@@ -150,10 +215,12 @@ function M.render(s)
     return
   end
   local diffing = vim.wo[s.win_old].diff and vim.wo[s.win_new].diff
-  local h = diffing and current_hunks(s)
+  local h = diffing and current_hunks(s) or nil
+  M.reanchor(s, h)
   for _, a in ipairs(s.store:get(e.path)) do
     local buf, row = anchor(s, a)
     local count = api.nvim_buf_line_count(buf)
+    local clamped = row > count
     row = math.min(row, count)
     local text = virt_lines(a)
     local opts = {
@@ -174,7 +241,7 @@ function M.render(s)
     end
     local ok, id = pcall(api.nvim_buf_set_extmark, buf, M.ns, row - 1, 0, opts)
     if ok then
-      table.insert(s.marks, { annotation = a, buf = buf, id = id })
+      table.insert(s.marks, { annotation = a, buf = buf, id = id, clamped = clamped })
       track(s, buf)
       if last ~= row then
         pcall(api.nvim_buf_set_extmark, buf, M.ns, last - 1, 0, { virt_lines = text })
@@ -259,7 +326,9 @@ end
 local function changed(s)
   M.render(s)
   require("annodiff.view").render_tree(s)
+  M.save(s)
 end
+M.changed = changed
 
 --- The record under the cursor on this side, if any.
 ---@param s annodiff.Session
@@ -329,6 +398,8 @@ function M.annotate(s, range)
       return
     end
     rec.text = text
+    local abuf, arow = anchor(s, rec)
+    rec.anchor = api.nvim_buf_get_lines(abuf, arow - 1, arow, false)[1]
     -- revdiff: "hunk" in the comment widens a +/- line to the end of its block
     if not rec.end_line and hunk and vim.regex([[\c\<hunk\>]]):match_str(text) then
       local last = hunks.block_end(hunk, rec.type)
@@ -469,7 +540,7 @@ end
 local function describe(a)
   local where = a.line == 0 and "file" or a.end_line and ("%d-%d"):format(a.line, a.end_line) or tostring(a.line)
   local first = vim.split(a.text, "\n", { plain = true })[1]
-  return ("%s:%s (%s) %s"):format(a.file, where, a.type == "" and "file" or a.type, first)
+  return ("%s:%s (%s) %s%s"):format(a.file, where, a.type == "" and "file" or a.type, first, a.orphan and "  [orphaned]" or "")
 end
 
 --- Pick an annotation and jump to it (\l).
@@ -495,31 +566,7 @@ end
 --- Default export path: <git-dir>/annodiff/annotations.md
 ---@param s annodiff.Session
 function M.default_path(s)
-  local ok, out = git.run(s.root, { "rev-parse", "--absolute-git-dir" })
-  local dir = ok and vim.trim(out) or vim.fs.joinpath(s.root, ".git")
-  return vim.fs.joinpath(dir, "annodiff", "annotations.md")
-end
-
---- Atomic write, mode 0600 (revdiff WriteFile).
-local function write_atomic(path, content)
-  vim.fn.mkdir(vim.fs.dirname(path), "p")
-  local tmp = path .. ".tmp" .. vim.uv.os_getpid()
-  local fd, err = vim.uv.fs_open(tmp, "w", 384)
-  if not fd then
-    return nil, err
-  end
-  local _, werr = vim.uv.fs_write(fd, content)
-  vim.uv.fs_close(fd)
-  if werr then
-    vim.uv.fs_unlink(tmp)
-    return nil, werr
-  end
-  local ok, rerr = vim.uv.fs_rename(tmp, path)
-  if not ok then
-    vim.uv.fs_unlink(tmp)
-    return nil, rerr
-  end
-  return true
+  return vim.fs.joinpath(persist.git_dir(s.root), "annodiff", "annotations.md")
 end
 
 --- Write the revdiff `##` export. Returns the path written.
@@ -529,7 +576,7 @@ end
 function M.export(s, path)
   M.sync(s)
   path = path and path ~= "" and vim.fn.fnamemodify(vim.fn.expand(path), ":p") or M.default_path(s)
-  local ok, err = write_atomic(path, s.store:format())
+  local ok, err = persist.write_atomic(path, s.store:format())
   if not ok then
     notify("export failed: " .. tostring(err), vim.log.levels.ERROR)
     return nil
@@ -542,6 +589,28 @@ function M.new_store(s)
   s.store = annotations.new()
   s.marks = {}
   s.annot_bufs = {}
+  s.reviewed = {}
+end
+
+--- Load saved state for this review into an empty store. Returns the count.
+---@param s annodiff.Session
+function M.restore(s)
+  s.state_path = persist.state_path(s.root, s.spec)
+  local state, err = persist.load(s.state_path)
+  if err then
+    notify(err .. ": " .. s.state_path, vim.log.levels.WARN)
+    s.state_path = nil -- never overwrite a file we could not read
+    return 0
+  end
+  if not state then
+    return 0
+  end
+  for _, a in ipairs(state.annotations) do
+    local rec = s.store:add(a)
+    rec.pending = rec.line > 0 and rec.anchor ~= nil
+  end
+  s.reviewed = state.reviewed
+  return #state.annotations
 end
 
 return M

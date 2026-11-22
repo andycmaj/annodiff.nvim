@@ -4,8 +4,9 @@ Review git diffs inside Neovim: a changed-file tree beside native diff windows,
 with the worktree side as your real, editable file (LSP, treesitter, gitsigns
 all work). Neovim port of [revdiff](https://github.com/andycmaj/revdiff).
 Annotate lines, ranges and files; export in revdiff's `##` format so the
-revdiff agent skills read it unchanged. Persistence and agent handoff come next
-(see [docs/plan.md](docs/plan.md)).
+revdiff agent skills read it unchanged. Annotations and reviewed marks persist
+per review and follow the code when it moves. Agent handoff comes next (see
+[docs/plan.md](docs/plan.md)).
 
 Neovim 0.10+, no dependencies.
 
@@ -27,8 +28,9 @@ lazy.nvim:
 | `:Annodiff A..B` | `A` | `B` |
 | `:Annodiff A...B` | merge base of `A` and `B` | `B` |
 
-`:AnnodiffClose`, `:AnnodiffRefresh` and `:AnnodiffExport [path]` act on the
-review in the current tab.
+`:AnnodiffClose`, `:AnnodiffRefresh`, `:AnnodiffExport [path]` and
+`:AnnodiffClear[!]` (drop annotations and reviewed marks; `!` skips the prompt)
+act on the review in the current tab.
 Each review opens in its own tab: `tree | old | new`.
 
 ### Keys
@@ -45,6 +47,9 @@ Each review opens in its own tab: `tree | old | new`.
 | `<localleader>d` | diff windows | delete the annotation under the cursor |
 | `<localleader>l` | everywhere | pick an annotation (`vim.ui.select`) and jump to it |
 | `<localleader>n` / `<localleader>N` | everywhere | next / previous annotation, across files |
+| `<Space>` | tree | mark the file under the cursor reviewed (✓) |
+| `<localleader>r` | diff windows | mark the open file reviewed |
+| `f` / `F` | tree | show only annotated / only unreviewed files (again to clear); `<Tab>` skips hidden files |
 
 In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
 in normal mode cancels.
@@ -59,6 +64,23 @@ file-level, and `start-end` ranges. A comment containing the word "hunk" on a
 Annotations on your real file follow edits. Each one gets matching blank
 virtual lines in the other window so the two sides stay row-aligned.
 
+### Persistence
+
+Each review (`:Annodiff HEAD`, `:Annodiff main...feature`, ...) keeps its
+annotations and reviewed marks in `.git/annodiff/reviews/<review>.json`,
+written on every change and restored when you open the same review again.
+Each annotation stores its line's text; on restore it finds that text again
+(same line, else the nearest match), so annotations follow code that moved.
+When the text is gone the annotation is kept, drawn where it was, and flagged
+"orphaned".
+
+On close, a review with annotations also writes a history entry in revdiff's
+format to `$REVDIFF_HISTORY_DIR` or `~/.config/revdiff/history/<repo>/`, so the
+revdiff Claude skill's "use my latest revdiff annotations" finds it. Set
+`history = false` to turn that off, or `history_dir` to move it.
+
+### Export
+
 `:AnnodiffExport [path]` writes them (atomic, mode 0600); the default path is
 `.git/annodiff/annotations.md`, and closing a review with annotations writes
 there too. The output is byte-identical to what revdiff's own `FormatOutput`
@@ -72,6 +94,8 @@ show an empty side; binary files show a placeholder.
 ```lua
 require("annodiff").setup({
   tree_width = 35,
+  history = true, -- revdiff-format history entry on close
+  history_dir = nil, -- default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
   keymaps = {
     next_file = "<Tab>",
     prev_file = "<S-Tab>",
@@ -86,6 +110,10 @@ require("annodiff").setup({
     list_annotations = "<localleader>l",
     next_annotation = "<localleader>n",
     prev_annotation = "<localleader>N",
+    toggle_reviewed = "<localleader>r",
+    tree_toggle_reviewed = "<Space>",
+    filter_annotated = "f",
+    filter_unreviewed = "F",
   },
 })
 ```

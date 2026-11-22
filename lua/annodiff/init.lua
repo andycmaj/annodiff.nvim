@@ -21,6 +21,11 @@ function M.export(path)
   return require("annodiff.view").export_current(path)
 end
 
+--- Delete the review's annotations and reviewed marks (asks unless force).
+function M.clear(force)
+  require("annodiff.view").clear_current(force)
+end
+
 function M.refresh()
   require("annodiff.view").refresh_current()
 end

@@ -97,6 +97,9 @@ end
 ---@field collapsed table<string, boolean>
 ---@field current? integer index of the open file
 ---@field counts? table<string, integer> annotation count per path
+---@field reviewed? table<string, boolean>
+---@field hidden? table<string, boolean> paths filtered out
+---@field summary? string extra text for the count line
 
 --- Render the tree to lines.
 ---@param root annodiff.TreeDir
@@ -116,7 +119,30 @@ function M.render(root, files, opts)
     return #lines - 1
   end
 
-  local count = #files == 1 and "1 file" or (#files .. " files")
+  local count = (#files == 1 and "1 file" or (#files .. " files")) .. (opts.summary or "")
+  local hidden = opts.hidden or {}
+  local visible_cache = {}
+  local function has_visible(node)
+    if visible_cache[node] == nil then
+      local v = false
+      for _, e in ipairs(node.files) do
+        if not hidden[e.path] then
+          v = true
+          break
+        end
+      end
+      if not v then
+        for _, d in pairs(node.dirs) do
+          if has_visible(d) then
+            v = true
+            break
+          end
+        end
+      end
+      visible_cache[node] = v
+    end
+    return visible_cache[node]
+  end
   local l = add(opts.header, { kind = "header" })
   table.insert(hls, { line = l, col_start = 0, col_end = -1, group = "AnnodiffHeader" })
   l = add(count, { kind = "header" })
@@ -126,6 +152,9 @@ function M.render(root, files, opts)
     local indent = string.rep("  ", depth)
     for _, key in ipairs(sorted_keys(node.dirs)) do
       local dir, name = compress(node.dirs[key])
+      if not has_visible(dir) then
+        goto continue
+      end
       local closed = opts.collapsed[dir.path]
       local icon = closed and "▸ " or "▾ "
       local line = add(indent .. icon .. name .. "/", { kind = "dir", path = dir.path })
@@ -133,14 +162,23 @@ function M.render(root, files, opts)
       if not closed then
         walk(dir, depth + 1)
       end
+      ::continue::
     end
     for _, entry in ipairs(node.files) do
+      if hidden[entry.path] then
+        goto next_file
+      end
       local idx = index_of[entry]
       local text = indent .. entry.status .. " " .. basename(entry.path)
       local origin_col
       if entry.old_path then
         origin_col = #text
         text = text .. " ← " .. entry.old_path
+      end
+      local reviewed_col
+      if opts.reviewed and opts.reviewed[entry.path] then
+        reviewed_col = #text
+        text = text .. " ✓"
       end
       local count_col
       local n = opts.counts and opts.counts[entry.path]
@@ -151,6 +189,9 @@ function M.render(root, files, opts)
       local line = add(text, { kind = "file", index = idx })
       if count_col then
         table.insert(hls, { line = line, col_start = count_col + 1, col_end = -1, group = "AnnodiffAnnotationCount" })
+      end
+      if reviewed_col then
+        table.insert(hls, { line = line, col_start = reviewed_col + 1, col_end = reviewed_col + 4, group = "AnnodiffReviewed" })
       end
       table.insert(hls, {
         line = line,
@@ -164,6 +205,7 @@ function M.render(root, files, opts)
       if idx == opts.current then
         table.insert(hls, { line = line, col_start = 0, col_end = -1, group = "AnnodiffCurrent", line_hl = true })
       end
+      ::next_file::
     end
   end
   walk(root, 0)
