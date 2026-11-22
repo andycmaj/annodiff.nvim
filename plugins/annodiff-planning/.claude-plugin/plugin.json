@@ -5,5 +5,6 @@
   "author": {
     "name": "andycmaj"
   },
+  "license": "MIT",
   "repository": "https://github.com/andycmaj/annodiff.nvim"
 }

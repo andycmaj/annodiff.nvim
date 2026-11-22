@@ -5,6 +5,7 @@
   "author": {
     "name": "andycmaj"
   },
+  "license": "MIT",
   "repository": "https://github.com/andycmaj/annodiff.nvim",
   "keywords": ["code-review", "diff", "annotations", "neovim"]
 }
