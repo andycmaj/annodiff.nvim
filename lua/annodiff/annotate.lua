@@ -32,11 +32,16 @@ local function entry(s)
   return s.current and s.files[s.current]
 end
 
---- Which side a window shows, or nil for the tree / foreign windows.
+--- Which side a window shows, or nil for the tree / foreign windows. In the
+--- inline layout the one diff window shows the new side, or the old side for
+--- a deleted file.
 ---@param s annodiff.Session
 ---@param win integer
 ---@return "old"|"new"|nil
 function M.side_of(s, win)
+  if s.layout == "inline" then
+    return win == s.win_new and (s.inline_side or "new") or nil
+  end
   if win == s.win_old then
     return "old"
   elseif win == s.win_new then
@@ -44,25 +49,59 @@ function M.side_of(s, win)
   end
 end
 
+--- Window showing a side, if any (inline: only the displayed side).
+---@param s annodiff.Session
+---@param side "old"|"new"
+---@return integer?
+function M.win_of(s, side)
+  if s.layout == "inline" then
+    return side == (s.inline_side or "new") and s.win_new or nil
+  end
+  return side == "old" and s.win_old or s.win_new
+end
+
+--- Buffer holding a side's content for the open file (shown or not).
+---@param s annodiff.Session
+---@param side "old"|"new"
+function M.buf_of(s, side)
+  return side == "old" and s.buf_old or s.buf_new
+end
+
+--- Whether the open file has a text diff (not binary).
+function M.diffing(s)
+  return s.current ~= nil and not s.binary and s.buf_old ~= nil and s.buf_new ~= nil
+end
+
 function M.lines_of(win)
   return api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false)
+end
+
+--- A side's lines. A side with no file (added / deleted file) is {}, not the
+--- single empty line an empty buffer holds.
+function M.side_lines(s, side)
+  if s.absent and s.absent[side] then
+    return {}
+  end
+  local buf = M.buf_of(s, side)
+  return buf and api.nvim_buf_is_valid(buf) and api.nvim_buf_get_lines(buf, 0, -1, false) or {}
 end
 
 ---@param s annodiff.Session
 ---@return annodiff.Hunk[]
 function M.hunks(s)
-  return hunks.compute(M.lines_of(s.win_old), M.lines_of(s.win_new))
+  return hunks.compute(M.side_lines(s, "old"), M.side_lines(s, "new"))
 end
 
---- Buffer and 1-based row where a record is drawn.
+--- Buffer and 1-based row of a record's own line (on its side's buffer).
 ---@param s annodiff.Session
 ---@param a annodiff.Annotation
 local function anchor(s, a)
   if a.type == "-" then
-    return api.nvim_win_get_buf(s.win_old), a.line
+    return M.buf_of(s, "old"), a.line
   end
-  return api.nvim_win_get_buf(s.win_new), math.max(a.line, 1)
+  return M.buf_of(s, "new"), math.max(a.line, 1)
 end
+M.anchor = anchor
 
 -- Rendering -----------------------------------------------------------------
 
@@ -130,8 +169,7 @@ end
 --- every annotation gets the same number of blank virtual lines on the other
 --- side, at the line sharing its screen row.
 function M.pad(s, h, side, line, height)
-  local other_win = side == "old" and s.win_new or s.win_old
-  local buf = api.nvim_win_get_buf(other_win)
+  local buf = M.buf_of(s, side == "old" and "new" or "old")
   local count = api.nvim_buf_line_count(buf)
   local above = line == 0
   local row = above and 1 or hunks.counterpart(h, side, line)
@@ -160,7 +198,7 @@ function M.reanchor(s, h)
       a.pending = nil
       if a.line > 0 and a.anchor then
         local side = a.type == "-" and "old" or "new"
-        local lines = M.lines_of(side == "old" and s.win_old or s.win_new)
+        local lines = M.side_lines(s, side)
         local found
         if lines[a.line] == a.anchor then
           found = a.line
@@ -204,25 +242,32 @@ function M.save(s)
   end
 end
 
---- Draw the open file's annotations: a tracking mark with the sign on the
---- first line (spanning the range), the text below the last line. Text rows
---- for one screen row (annotations, then agent threads) are drawn by a single
---- extmark, so their order never depends on how Neovim ties same-row marks.
+--- Draw the open file's annotations and agent threads.
+---
+--- A record gets a tracking mark (sign, range) on its own line when that line
+--- is on screen, and its text rows below its last line. Rows for one screen
+--- row (annotations, then threads) are drawn by a single extmark, so their
+--- order never depends on how Neovim ties same-row marks.
+---
+--- Split layout: diff mode ignores virtual lines, so every row block gets
+--- blank padding at the counterpart line in the other window.
+--- Inline layout: removed lines are ghost rows above where they were; rows of
+--- records on removed lines go right under their ghost row.
 ---@param s annodiff.Session
 function M.render(s)
   M.sync(s)
   M.clear(s)
   local e = entry(s)
-  if not e then
+  if not e or not s.buf_new then
     return
   end
-  local diffing = vim.wo[s.win_old].diff and vim.wo[s.win_new].diff
-  local h = diffing and M.hunks(s) or nil
+  local h = M.diffing(s) and M.hunks(s) or nil
   M.reanchor(s, h)
+  local inline = s.layout == "inline"
+  local main_side = inline and (s.inline_side or "new") or nil
 
   local display, order = {}, {}
-  --- Queue virtual rows under (or above) a line. side/line feed the padding.
-  local function show(buf, row, above, rows, side, line)
+  local function entry_at(buf, row, above, side, line)
     local key = ("%d:%d:%s"):format(buf, row, tostring(above))
     local d = display[key]
     if not d then
@@ -230,41 +275,86 @@ function M.render(s)
       display[key] = d
       table.insert(order, d)
     end
-    vim.list_extend(d.lines, rows)
+    return d
   end
 
+  -- inline ghosts: old line -> { entry, rows } so notes can slot in under them
+  local ghosts = {}
+  if inline and h then
+    ghosts = require("annodiff.inline").draw(s, h, entry_at)
+  end
+
+  --- Queue rows for a record on `side`, below line `last` (0 = file-level).
+  local function place(side, line, last, rows)
+    if line == 0 then
+      local buf = inline and M.buf_of(s, main_side) or M.buf_of(s, "new")
+      local d = entry_at(buf, 1, true, "new", 0)
+      vim.list_extend(d.lines, rows)
+      return
+    end
+    if inline and side ~= main_side then
+      local g = ghosts[line]
+      if g then
+        vim.list_extend(g.rows, rows)
+        return
+      end
+      -- not a removed line any more (stale record): under its counterpart
+      local buf = M.buf_of(s, main_side)
+      local row = h and hunks.counterpart(h, side, line) or 1
+      row = math.max(1, math.min(row, api.nvim_buf_line_count(buf)))
+      vim.list_extend(entry_at(buf, row, false, main_side, row).lines, rows)
+      return
+    end
+    local buf = M.buf_of(s, side)
+    vim.list_extend(entry_at(buf, last, false, side, last).lines, rows)
+  end
+  M.place = place
+
   for _, a in ipairs(s.store:get(e.path)) do
+    local side = a.type == "-" and "old" or "new"
     local buf, row = anchor(s, a)
     local count = api.nvim_buf_line_count(buf)
     local clamped = row > count
     row = math.min(row, count)
-    local opts = {
-      sign_text = "▍",
-      sign_hl_group = "AnnodiffAnnotationSign",
-      invalidate = true,
-      undo_restore = false,
-    }
     local last = row
     if a.end_line and a.end_line <= count and a.end_line > row then
-      opts.end_row = a.end_line - 1
-      opts.end_col = 0
       last = a.end_line
     end
-    local ok, id = pcall(api.nvim_buf_set_extmark, buf, M.ns, row - 1, 0, opts)
-    if ok then
-      table.insert(s.marks, { annotation = a, buf = buf, id = id, clamped = clamped })
-      M.track(s, buf)
-      show(buf, a.line == 0 and 1 or last, a.line == 0, virt_lines(a), a.type == "-" and "old" or "new", a.line == 0 and 0 or last)
+    local on_screen = a.line > 0 and (not inline or side == main_side)
+    if on_screen then
+      local opts = {
+        sign_text = "▍",
+        sign_hl_group = "AnnodiffAnnotationSign",
+        invalidate = true,
+        undo_restore = false,
+      }
+      if last ~= row then
+        opts.end_row = last - 1
+        opts.end_col = 0
+      end
+      local ok, id = pcall(api.nvim_buf_set_extmark, buf, M.ns, row - 1, 0, opts)
+      if ok then
+        table.insert(s.marks, { annotation = a, buf = buf, id = id, clamped = clamped })
+        M.track(s, buf)
+      end
     end
+    place(side, a.line, last, virt_lines(a))
   end
   if s.threads then
-    require("annodiff.ask").render(s, show)
+    require("annodiff.ask").render(s, place)
   end
   for _, d in ipairs(order) do
-    if pcall(api.nvim_buf_set_extmark, d.buf, M.ns, d.row - 1, 0, { virt_lines = d.lines, virt_lines_above = d.above }) then
+    local lines = d.lines
+    if d.ghosts then
+      lines = vim.list_slice(d.lines) -- e.g. a file-level note above line 1 comes first
+      for _, g in ipairs(d.ghosts) do
+        vim.list_extend(lines, g.rows)
+      end
+    end
+    if #lines > 0 and pcall(api.nvim_buf_set_extmark, d.buf, M.ns, d.row - 1, 0, { virt_lines = lines, virt_lines_above = d.above }) then
       M.track(s, d.buf)
-      if h then
-        M.pad(s, h, d.side, d.line, #d.lines)
+      if h and not inline and not d.ghosts then
+        M.pad(s, h, d.side, d.line, #lines)
       end
     end
   end
@@ -383,22 +473,84 @@ function M.target(s, win, side, range)
   return rec, hunk
 end
 
---- Annotate the cursor line or a visual range (\a).
+local function short(text)
+  return vim.trim((text or ""):gsub("%s+", " ")):sub(1, 60)
+end
+
+--- What the cursor (or a visual range) points at, then cb(rec, hunk, existing).
+--- In the inline layout, removed lines are ghost rows the cursor cannot reach:
+--- on a line with ghost rows above it, a picker offers the line itself, each
+--- removed line, and the whole removed block.
 ---@param s annodiff.Session
 ---@param range? {[1]: integer, [2]: integer}
-function M.annotate(s, range)
+---@param cb fun(rec: table, hunk?: annodiff.Hunk, existing?: annodiff.Annotation)
+---@param verb string
+function M.pick_target(s, range, cb, verb)
   local win = api.nvim_get_current_win()
   local side = M.side_of(s, win)
   if not side or not entry(s) then
-    notify("annotate from a diff window", vim.log.levels.WARN)
+    notify(verb .. " from a diff window", vim.log.levels.WARN)
     return
   end
-  if not vim.wo[win].diff then
-    notify("no text diff here; use file-level annotation", vim.log.levels.WARN)
+  if not M.diffing(s) then
+    notify("no text diff here; use the file-level key", vim.log.levels.WARN)
     return
   end
   local existing = not range and at_cursor(s, win, side)
   local rec, hunk = M.target(s, win, side, range)
+  if existing then
+    rec = { file = existing.file, line = existing.line, end_line = existing.end_line, type = existing.type }
+  end
+  local removed = {}
+  if s.layout == "inline" and side == "new" and not range then
+    local row = api.nvim_win_get_cursor(win)[1]
+    removed = require("annodiff.inline").removed_at(M.hunks(s), api.nvim_buf_line_count(s.buf_new), row)
+  end
+  if #removed == 0 then
+    return cb(rec, hunk, existing or nil)
+  end
+  local old = M.side_lines(s, "old")
+  local new_text = api.nvim_get_current_line()
+  local items = { { rec = rec, hunk = hunk, existing = existing or nil, label = ("this line %d (%s): %s"):format(rec.line, rec.type, short(new_text)) } }
+  local e = entry(s)
+  for _, l in ipairs(removed) do
+    local r = { file = e.path, line = l, type = "-" }
+    local ex = s.store:find(e.path, l, "-")
+    table.insert(items, {
+      rec = r,
+      existing = ex,
+      label = ("removed %d: %s%s"):format(l, short(old[l]), ex and "  [annotated]" or ""),
+    })
+  end
+  if #removed > 1 then
+    table.insert(items, {
+      rec = { file = e.path, line = removed[1], end_line = removed[#removed], type = "-" },
+      label = ("all removed lines %d-%d"):format(removed[1], removed[#removed]),
+    })
+  end
+  vim.ui.select(items, {
+    prompt = verb,
+    format_item = function(it)
+      return it.label
+    end,
+  }, function(choice)
+    if choice then
+      cb(choice.rec, choice.hunk, choice.existing)
+    end
+  end)
+end
+
+--- Annotate the cursor line or a visual range (\a).
+---@param s annodiff.Session
+---@param range? {[1]: integer, [2]: integer}
+function M.annotate(s, range)
+  M.pick_target(s, range, function(rec, hunk, existing)
+    M.edit(s, rec, hunk, existing)
+  end, "annotate")
+end
+
+--- Open the annotation editor for a target record.
+function M.edit(s, rec, hunk, existing)
   if existing then
     rec = { file = existing.file, line = existing.line, end_line = existing.end_line, type = existing.type }
   end
@@ -416,7 +568,7 @@ function M.annotate(s, range)
     end
     rec.text = text
     local abuf, arow = anchor(s, rec)
-    rec.anchor = api.nvim_buf_get_lines(abuf, arow - 1, arow, false)[1]
+    rec.anchor = abuf and api.nvim_buf_get_lines(abuf, arow - 1, arow, false)[1] or nil
     -- revdiff: "hunk" in the comment widens a +/- line to the end of its block
     if not rec.end_line and hunk and vim.regex([[\c\<hunk\>]]):match_str(text) then
       local last = hunks.block_end(hunk, rec.type)
@@ -458,13 +610,43 @@ end
 function M.delete(s)
   local win = api.nvim_get_current_win()
   local side = M.side_of(s, win)
-  local a = side and at_cursor(s, win, side)
-  if not a then
-    notify("no annotation on this line")
+  if not side or not entry(s) then
     return
   end
-  s.store:delete(a.file, a.line, a.type)
-  changed(s)
+  local candidates = {}
+  local here = at_cursor(s, win, side)
+  if here then
+    table.insert(candidates, here)
+  end
+  if s.layout == "inline" and side == "new" and M.diffing(s) then
+    local row = api.nvim_win_get_cursor(win)[1]
+    for _, l in ipairs(require("annodiff.inline").removed_at(M.hunks(s), api.nvim_buf_line_count(s.buf_new), row)) do
+      local a = s.store:find(entry(s).path, l, "-")
+      if a then
+        table.insert(candidates, a)
+      end
+    end
+  end
+  local function drop(a)
+    s.store:delete(a.file, a.line, a.type)
+    changed(s)
+  end
+  if #candidates == 0 then
+    notify("no annotation on this line")
+  elseif #candidates == 1 then
+    drop(candidates[1])
+  else
+    vim.ui.select(candidates, {
+      prompt = "delete annotation",
+      format_item = function(a)
+        return ("%d (%s): %s"):format(a.line, a.type, short(a.text))
+      end,
+    }, function(a)
+      if a then
+        drop(a)
+      end
+    end)
+  end
 end
 
 --- All records in review order (tree file order, then line).
@@ -506,10 +688,24 @@ function M.jump(s, item)
     view.open_file(s, item.index, { hunk = false })
   end
   local a = item.annotation
-  local win = a.type == "-" and s.win_old or s.win_new
+  local side = a.type == "-" and "old" or "new"
+  local win = M.win_of(s, side)
+  local line = math.max(a.line, 1)
+  if not win then
+    -- inline: a removed line is a ghost row; land on the line it sits above
+    win = s.win_new
+    local h = M.hunks(s)
+    local count = api.nvim_buf_line_count(s.buf_new)
+    line = hunks.counterpart(h, "old", line)
+    for _, hk in ipairs(h) do
+      if hk[2] > 0 and a.line >= hk[1] and a.line < hk[1] + hk[2] then
+        line = (require("annodiff.inline").ghost_row(hk, count))
+      end
+    end
+  end
   local buf = api.nvim_win_get_buf(win)
   api.nvim_set_current_win(win)
-  api.nvim_win_set_cursor(win, { math.min(math.max(a.line, 1), api.nvim_buf_line_count(buf)), 0 })
+  api.nvim_win_set_cursor(win, { math.min(math.max(line, 1), api.nvim_buf_line_count(buf)), 0 })
   vim.cmd("normal! zz")
 end
 
@@ -525,7 +721,7 @@ function M.step(s, dir)
     return
   end
   local win = api.nvim_get_current_win()
-  local row = (win == s.win_old or win == s.win_new) and api.nvim_win_get_cursor(win)[1] or 0
+  local row = M.side_of(s, win) and api.nvim_win_get_cursor(win)[1] or 0
   local cur = s.current or 0
   local function key(it)
     return it.index * 1e7 + it.annotation.line

@@ -22,9 +22,11 @@ local M = {}
 ---@field tree_send string|false
 ---@field ask string|false
 ---@field ask_file string|false
+---@field toggle_layout string|false
 
 ---@class annodiff.Config
 ---@field tree_width integer
+---@field layout "split"|"inline"
 ---@field history boolean write a revdiff-format history entry when a review with annotations closes
 ---@field history_dir? string default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
 ---@field send_command? string default $ANNODIFF_SEND_COMMAND, then $REVDIFF_POST_FLUSH_COMMAND
@@ -33,6 +35,7 @@ local M = {}
 ---@field keymaps annodiff.Keymaps
 M.defaults = {
   tree_width = 35,
+  layout = "split", -- or "inline": one window, removed lines drawn as ghost rows
   history = true,
   history_dir = nil,
   send_command = nil, -- sh -c command; annotations on stdin (revdiff post-flush-command)
@@ -66,6 +69,7 @@ M.defaults = {
     tree_send = "O",
     ask = "<localleader>c", -- diff windows, normal / visual; opens the thread if there is one
     ask_file = "<localleader>C",
+    toggle_layout = "<localleader>i",
   },
 }
 

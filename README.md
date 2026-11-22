@@ -1,8 +1,8 @@
 # annodiff.nvim
 
-Review git diffs inside Neovim: a changed-file tree beside native diff windows,
-with the worktree side as your real, editable file (LSP, treesitter, gitsigns
-all work). Neovim port of [revdiff](https://github.com/andycmaj/revdiff).
+Review git diffs inside Neovim: a changed-file tree beside native diff windows
+(or one inline window), with the worktree side as your real, editable file
+(LSP, treesitter, gitsigns all work). Neovim port of [revdiff](https://github.com/andycmaj/revdiff).
 Annotate lines, ranges and files; export in revdiff's `##` format so the
 revdiff agent skills read it unchanged. Annotations and reviewed marks persist
 per review and follow the code when it moves. Send them to an agent, or ask
@@ -34,6 +34,37 @@ lazy.nvim:
 act on the review in the current tab.
 Each review opens in its own tab: `tree | old | new`.
 
+### Layouts
+
+- **split** (default): `tree | old | new`, Neovim's diff mode.
+- **inline**: `tree | new`. One window with the new side (your real file for
+  worktree reviews): added lines highlighted, removed lines drawn as ghost
+  rows above the line they were removed before (below the last line when
+  removed at the end). A deleted file shows its old content with every line
+  marked removed; an added file is all highlighted.
+
+Pick per review with `:Annodiff --inline ...` / `--split`, make inline the
+default in your plugin config, or switch any time with `\i` /
+`:AnnodiffLayout [inline|split]`:
+
+```lua
+-- lazy.nvim
+{
+  "andycmaj/annodiff.nvim",
+  cmd = { "Annodiff", "AnnodiffLayout" },
+  opts = { layout = "inline" },
+}
+
+-- or without a plugin manager
+require("annodiff").setup({ layout = "inline" })
+```
+
+In inline, `]c` / `[c` step through the changed rows, and since the cursor
+can't sit on a ghost row, `\a`, `\c` and `\d` on a line with ghost rows above
+it open a picker: the line itself, each removed line, or the whole removed
+block. Notes on removed lines keep their old-side numbers, so the export is
+the same in both layouts.
+
 ### Keys
 
 | Key | Where | Action |
@@ -54,6 +85,7 @@ Each review opens in its own tab: `tree | old | new`.
 | `<localleader>s` / `O` (tree) | everywhere | send the annotations to your agent (see below) |
 | `<localleader>c` | diff windows (normal / visual) | ask the agent about the line or range; on a line with a thread, open it |
 | `<localleader>C` | everywhere | ask about the whole file, or open its thread |
+| `<localleader>i` | everywhere | toggle split / inline layout |
 
 In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
 in normal mode cancels.
@@ -143,6 +175,7 @@ show an empty side; binary files show a placeholder.
 ```lua
 require("annodiff").setup({
   tree_width = 35,
+  layout = "split", -- or "inline"
   history = true, -- revdiff-format history entry on close
   history_dir = nil, -- default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
   send_command = nil, -- sh -c; annotations on stdin
@@ -175,6 +208,7 @@ require("annodiff").setup({
     tree_send = "O",
     ask = "<localleader>c",
     ask_file = "<localleader>C",
+    toggle_layout = "<localleader>i",
   },
 })
 ```

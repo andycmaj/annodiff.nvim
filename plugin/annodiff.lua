@@ -12,9 +12,9 @@ vim.api.nvim_create_user_command("Annodiff", function(cmd)
   require("annodiff").open(cmd.fargs)
 end, {
   nargs = "*",
-  desc = "Review a git diff: :Annodiff [--staged] [ref | A..B | A...B]",
+  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B]",
   complete = function(arglead)
-    local items = { "--staged" }
+    local items = { "--staged", "--inline", "--split" }
     vim.list_extend(items, require("annodiff.git").refs())
     return vim.tbl_filter(function(item)
       return vim.startswith(item, arglead)
@@ -49,4 +49,14 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
       require("annodiff.view").close_all_leaving()
     end
   end,
+})
+
+vim.api.nvim_create_user_command("AnnodiffLayout", function(cmd)
+  require("annodiff.view").layout_current(cmd.args)
+end, {
+  nargs = "?",
+  complete = function()
+    return { "inline", "split" }
+  end,
+  desc = "Switch the review between split and inline (no argument toggles)",
 })

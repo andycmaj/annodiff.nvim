@@ -163,8 +163,8 @@ function M.prompt(s, t, question, follow_up)
     local span = t.end_line and t.end_line > t.line and ("lines %d-%d"):format(t.line, t.end_line)
       or ("line %d"):format(t.line)
     table.insert(out, ("Asking about: %s (%s)"):format(span, type_names[t.type] or t.type))
-    if e and e.path == t.file and vim.wo[s.win_old].diff then
-      local old, new = annotate.lines_of(s.win_old), annotate.lines_of(s.win_new)
+    if e and e.path == t.file and annotate.diffing(s) then
+      local old, new = annotate.side_lines(s, "old"), annotate.side_lines(s, "new")
       local ex = M.excerpt(old, new, hunks.compute(old, new), t.type, t.line)
       if ex ~= "" then
         table.insert(out, "")
@@ -271,20 +271,20 @@ function M.ask(s, range)
     return
   end
   local win = api.nvim_get_current_win()
-  local side = annotate.side_of(s, win)
-  if not side or not entry(s) then
+  if not annotate.side_of(s, win) or not entry(s) then
     notify("ask from a diff window", vim.log.levels.WARN)
     return
   end
-  if not vim.wo[win].diff then
+  if not annotate.diffing(s) then
     return M.ask_file(s)
   end
-  local rec = annotate.target(s, win, side, range)
-  local existing = s.threads:get(rec.file, rec.line, rec.type)
-  if existing then
-    return M.open_thread(s, existing)
-  end
-  ask_new(s, { file = rec.file, line = rec.line, end_line = rec.end_line, type = rec.type })
+  annotate.pick_target(s, range, function(rec)
+    local existing = s.threads:get(rec.file, rec.line, rec.type)
+    if existing then
+      return M.open_thread(s, existing)
+    end
+    ask_new(s, { file = rec.file, line = rec.line, end_line = rec.end_line, type = rec.type })
+  end, "ask the agent")
 end
 
 --- \C: ask about the whole file, or open its thread.
@@ -357,9 +357,8 @@ function M.promote(s, t)
     end
     local rec = { file = t.file, line = t.line, end_line = t.end_line, type = t.type, text = text }
     if t.line > 0 then
-      local win = t.type == "-" and s.win_old or s.win_new
-      local buf = api.nvim_win_get_buf(win)
-      rec.anchor = api.nvim_buf_get_lines(buf, t.line - 1, t.line, false)[1]
+      local buf = annotate.buf_of(s, t.type == "-" and "old" or "new")
+      rec.anchor = buf and api.nvim_buf_get_lines(buf, t.line - 1, t.line, false)[1] or nil
     end
     s.store:add(rec)
     annotate.changed(s)
@@ -468,26 +467,26 @@ end
 --- Queue thread previews for the open file (annotate.render draws them after
 --- the annotations on the same row).
 ---@param s annodiff.Session
----@param show fun(buf: integer, row: integer, above: boolean, rows: table, side: string, line: integer)
-function M.render(s, show)
+---@param place fun(side: string, line: integer, last: integer, rows: table)
+function M.render(s, place)
   local e = entry(s)
   if not e then
     return
   end
+  local width = api.nvim_win_get_width(s.win_new) - 12
   for _, t in ipairs(s.threads:for_file(e.path)) do
     local side = t.type == "-" and "old" or "new"
-    local win = side == "old" and s.win_old or s.win_new
-    local buf = api.nvim_win_get_buf(win)
+    local buf = annotate.buf_of(s, side)
     local count = api.nvim_buf_line_count(buf)
-    local last = t.line == 0 and 1 or math.min(t.end_line or t.line, count)
-    if t.line > 0 then
+    local last = t.line == 0 and 0 or math.min(t.end_line or t.line, count)
+    if t.line > 0 and annotate.win_of(s, side) then
       pcall(api.nvim_buf_set_extmark, buf, annotate.ns, math.min(t.line, count) - 1, 0, {
         sign_text = "⟢",
         sign_hl_group = "AnnodiffThreadSign",
       })
       annotate.track(s, buf)
     end
-    show(buf, last, t.line == 0, M.preview(t, api.nvim_win_get_width(win) - 12), side, t.line == 0 and 0 or last)
+    place(side, t.line, last, M.preview(t, width))
   end
 end
 

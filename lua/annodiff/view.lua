@@ -55,6 +55,7 @@ local function define_highlights()
   end
   annotate.define_highlights()
   ask.define_highlights()
+  require("annodiff.inline").define_highlights()
 end
 
 ---@return annodiff.Session?
@@ -65,7 +66,7 @@ end
 local function valid(s)
   return api.nvim_tabpage_is_valid(s.tab)
     and api.nvim_win_is_valid(s.win_tree)
-    and api.nvim_win_is_valid(s.win_old)
+    and (s.layout == "inline" or (s.win_old and api.nvim_win_is_valid(s.win_old)))
     and api.nvim_win_is_valid(s.win_new)
 end
 
@@ -124,6 +125,9 @@ local function nav_maps(s, buf, opts)
   map(km.ask_file, function()
     ask.ask_file(s)
   end, "ask the agent about the file")
+  map(km.toggle_layout, function()
+    M.set_layout(s)
+  end, "toggle split / inline layout")
   if not opts.tree then
     map(km.toggle_reviewed, function()
       M.toggle_reviewed(s, s.current)
@@ -202,6 +206,7 @@ local function unmap_real(s)
     "send",
     "ask",
     "ask_file",
+    "toggle_layout",
   }) do
     each_lhs(km[key], function(l)
       pcall(vim.keymap.del, "n", l, { buffer = buf })
@@ -396,9 +401,28 @@ local function in_diff(lnum)
   return vim.fn.diff_hlID(lnum, 1) ~= 0 or vim.fn.diff_filler(lnum) > 0
 end
 
----@param win integer
+--- Inline layout: rows of the hunks in the diff window (no diff mode there).
+local function inline_rows(s)
+  if not annotate.diffing(s) then
+    return {}
+  end
+  if s.inline_side == "old" then
+    return { 1 } -- deleted file: one hunk, the whole file
+  end
+  return require("annodiff.inline").hunk_rows(annotate.hunks(s), api.nvim_buf_line_count(s.buf_new))
+end
+
+---@param s annodiff.Session
 ---@param where "first"|"last"
-local function goto_hunk(win, where)
+local function goto_hunk(s, where)
+  local win = s.win_new
+  if s.layout == "inline" then
+    local rows = inline_rows(s)
+    if #rows > 0 then
+      api.nvim_win_set_cursor(win, { where == "first" and rows[1] or rows[#rows], 0 })
+    end
+    return
+  end
   api.nvim_win_call(win, function()
     if where == "first" then
       api.nvim_win_set_cursor(win, { 1, 0 })
@@ -425,6 +449,48 @@ local function setup_diff_window(win)
   vim.wo[win].winfixwidth = false
 end
 
+--- Buffers made for a side that is not on screen (inline layout); dropped on
+--- the next file or on close.
+local function drop_hidden(s)
+  for _, buf in ipairs(s.hidden_bufs or {}) do
+    if api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) == -1 then
+      pcall(api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  s.hidden_bufs = {}
+end
+
+local function hidden_scratch(s, lines, path)
+  local buf = scratch(s, lines, path)
+  vim.bo[buf].bufhidden = "hide"
+  s.hidden_bufs = s.hidden_bufs or {}
+  table.insert(s.hidden_bufs, buf)
+  return buf
+end
+
+local function open_real(s, win, real_path)
+  api.nvim_win_call(win, function()
+    vim.cmd.edit(vim.fn.fnameescape(real_path))
+  end)
+  local buf = api.nvim_win_get_buf(win)
+  nav_maps(s, buf, { close = false })
+  diff_maps(s, buf)
+  s.real_buf = buf
+  -- edits shift hunks: redraw annotations (padding, ghost rows) once typing settles
+  s.real_autocmd = api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+    group = s.augroup,
+    buffer = buf,
+    callback = function()
+      vim.schedule(function()
+        if s.real_buf == buf and valid(s) then
+          annotate.render(s)
+        end
+      end)
+    end,
+  })
+  return buf
+end
+
 ---@param s annodiff.Session
 ---@param index integer
 ---@param opts? {focus?: "tree"|"old"|"new", hunk?: "first"|"last"|false}
@@ -440,18 +506,18 @@ function M.open_file(s, index, opts)
   end
   local root, spec = s.root, s.spec
   local old_path = entry.old_path or entry.path
+  local inline = s.layout == "inline"
 
   local old_lines, old_bin = git.show(root, spec.left, old_path)
   local real_path = vim.fs.joinpath(root, entry.path)
   local use_real = spec.right.kind == "worktree" and entry.status ~= "D" and vim.fn.filereadable(real_path) == 1
   local new_lines, new_bin
-  if use_real then
-    -- read once to rule out binary files before handing them to :edit
-    new_lines, new_bin = git.show(root, spec.right, entry.path)
-  elseif entry.status ~= "D" then
+  if entry.status ~= "D" then
+    -- for the real file too: rules out binary files before handing them to :edit
     new_lines, new_bin = git.show(root, spec.right, entry.path)
   end
   local binary = old_bin or new_bin
+  local deleted = not use_real and new_lines == nil and old_lines ~= nil
 
   api.nvim_set_current_tabpage(s.tab)
   annotate.sync(s)
@@ -459,43 +525,60 @@ function M.open_file(s, index, opts)
   annotate.clear(s)
   vim.cmd("diffoff!")
   unmap_real(s)
+  local stale = s.hidden_bufs
+  s.hidden_bufs = {}
 
   local left_name = git.side_label(spec.left) .. "/" .. old_path
   local right_name = git.side_label(spec.right) .. "/" .. entry.path
+  s.binary = binary
+  s.inline_side = "new"
+  s.absent = { old = old_lines == nil, new = not use_real and new_lines == nil }
 
   if binary then
-    show_scratch(s, s.win_old, scratch(s, binary_placeholder(entry)), left_name)
-    show_scratch(s, s.win_new, scratch(s, binary_placeholder(entry)), right_name)
-  else
-    show_scratch(s, s.win_old, scratch(s, old_lines or {}, old_path), left_name)
-    if use_real then
-      api.nvim_win_call(s.win_new, function()
-        vim.cmd.edit(vim.fn.fnameescape(real_path))
-      end)
-      local buf = api.nvim_win_get_buf(s.win_new)
-      nav_maps(s, buf, { close = false })
-      diff_maps(s, buf)
-      s.real_buf = buf
-      -- edits shift hunks: redraw annotations (and their padding) once typing settles
-      s.real_autocmd = api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
-        group = s.augroup,
-        buffer = buf,
-        callback = function()
-          vim.schedule(function()
-            if s.real_buf == buf and valid(s) then
-              annotate.render(s)
-            end
-          end)
-        end,
-      })
+    local ph = binary_placeholder(entry)
+    if inline then
+      s.buf_old = hidden_scratch(s, ph)
     else
-      show_scratch(s, s.win_new, scratch(s, new_lines or {}, entry.path), right_name)
+      s.buf_old = scratch(s, ph)
+      show_scratch(s, s.win_old, s.buf_old, left_name)
+    end
+    s.buf_new = scratch(s, ph)
+    show_scratch(s, s.win_new, s.buf_new, right_name)
+  elseif inline then
+    if deleted then
+      -- nothing on the new side: show the old content, all of it removed
+      s.inline_side = "old"
+      s.buf_old = scratch(s, old_lines or {}, old_path)
+      show_scratch(s, s.win_new, s.buf_old, left_name)
+      s.buf_new = hidden_scratch(s, {})
+    else
+      s.buf_old = hidden_scratch(s, old_lines or {}, old_path)
+      if use_real then
+        s.buf_new = open_real(s, s.win_new, real_path)
+      else
+        s.buf_new = scratch(s, new_lines or {}, entry.path)
+        show_scratch(s, s.win_new, s.buf_new, right_name)
+      end
+    end
+  else
+    s.buf_old = scratch(s, old_lines or {}, old_path)
+    show_scratch(s, s.win_old, s.buf_old, left_name)
+    if use_real then
+      s.buf_new = open_real(s, s.win_new, real_path)
+    else
+      s.buf_new = scratch(s, new_lines or {}, entry.path)
+      show_scratch(s, s.win_new, s.buf_new, right_name)
     end
     for _, win in ipairs({ s.win_old, s.win_new }) do
       api.nvim_win_call(win, function()
         vim.cmd("diffthis")
       end)
       setup_diff_window(win)
+    end
+  end
+  for _, buf in ipairs(stale or {}) do
+    if api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) == -1 then
+      pcall(api.nvim_buf_delete, buf, { force = true })
     end
   end
 
@@ -511,19 +594,65 @@ function M.open_file(s, index, opts)
   end
 
   if not binary and opts.hunk ~= false then
-    goto_hunk(s.win_new, opts.hunk or "first")
+    goto_hunk(s, opts.hunk or "first")
   end
   local focus = opts.focus and s["win_" .. opts.focus]
   if focus and api.nvim_win_is_valid(focus) then
     api.nvim_set_current_win(focus)
+  elseif opts.focus == "old" then
+    api.nvim_set_current_win(s.win_new)
   end
+end
+
+--- Switch the review between "split" (two diff windows) and "inline" (one
+--- window, removed lines as ghost rows). Keeps the open file and cursor line.
+---@param s annodiff.Session
+---@param layout? "split"|"inline" nil toggles
+function M.set_layout(s, layout)
+  layout = layout or (s.layout == "inline" and "split" or "inline")
+  if layout ~= "split" and layout ~= "inline" then
+    notify("layout is split or inline", vim.log.levels.WARN)
+    return
+  end
+  if layout == s.layout then
+    return
+  end
+  local cursor = api.nvim_win_is_valid(s.win_new) and api.nvim_win_get_cursor(s.win_new)
+  local back_to_tree = api.nvim_get_current_win() == s.win_tree
+  annotate.sync(s)
+  annotate.clear(s)
+  s.switching = true
+  api.nvim_set_current_tabpage(s.tab)
+  vim.cmd("diffoff!")
+  if layout == "inline" then
+    local old_win = s.win_old
+    s.win_old = nil
+    if old_win and api.nvim_win_is_valid(old_win) then
+      api.nvim_win_close(old_win, true)
+    end
+  else
+    api.nvim_set_current_win(s.win_new)
+    vim.cmd("leftabove vsplit")
+    s.win_old = api.nvim_get_current_win()
+  end
+  s.layout = layout
+  s.switching = false
+  if s.current then
+    M.open_file(s, s.current, { hunk = false })
+    if cursor then
+      pcall(api.nvim_win_set_cursor, s.win_new, cursor)
+    end
+  end
+  vim.cmd("wincmd =")
+  api.nvim_win_set_width(s.win_tree, config.options.tree_width)
+  api.nvim_set_current_win(back_to_tree and s.win_tree or s.win_new)
 end
 
 local function focused_side(s)
   local win = api.nvim_get_current_win()
   if win == s.win_tree then
     return "tree"
-  elseif win == s.win_old then
+  elseif s.win_old and win == s.win_old then
     return "old"
   end
   return "new"
@@ -586,10 +715,45 @@ end
 ---@param dir 1|-1
 function M.step_hunk(s, dir)
   local win = api.nvim_get_current_win()
+  local count = vim.v.count1
+  if s.layout == "inline" then
+    local rows = inline_rows(s)
+    local cur = api.nvim_win_get_cursor(s.win_new)[1]
+    local target
+    if dir > 0 then
+      local passed = 0
+      for _, r in ipairs(rows) do
+        if r > cur then
+          passed = passed + 1
+          target = r
+          if passed == count then
+            break
+          end
+        end
+      end
+    else
+      local passed = 0
+      for i = #rows, 1, -1 do
+        if rows[i] < cur then
+          passed = passed + 1
+          target = rows[i]
+          if passed == count then
+            break
+          end
+        end
+      end
+    end
+    if target then
+      api.nvim_set_current_win(s.win_new)
+      api.nvim_win_set_cursor(s.win_new, { target, 0 })
+    else
+      M.step_file(s, dir, dir > 0 and "first" or "last")
+    end
+    return
+  end
   if win ~= s.win_old and win ~= s.win_new then
     win = s.win_new
   end
-  local count = vim.v.count1
   local moved = false
   api.nvim_win_call(win, function()
     local before = api.nvim_win_get_cursor(win)[1]
@@ -666,6 +830,7 @@ function M.close(s, opts)
   end
   annotate.clear(s)
   unmap_real(s)
+  drop_hidden(s)
   pcall(api.nvim_del_augroup_by_id, s.augroup)
   if not api.nvim_tabpage_is_valid(s.tab) then
     return
@@ -761,6 +926,16 @@ function M.clear_current(force)
   notify(("cleared %d annotation(s)"):format(n))
 end
 
+---@param layout? "split"|"inline"
+function M.layout_current(layout)
+  local s = M.current()
+  if not s then
+    notify("no review in this tab", vim.log.levels.WARN)
+    return
+  end
+  M.set_layout(s, layout ~= "" and layout or nil)
+end
+
 function M.refresh_current()
   local s = M.current()
   if not s then
@@ -774,6 +949,14 @@ end
 ---@return annodiff.Session?
 function M.open(args)
   define_highlights()
+  local opts_layout
+  args = vim.tbl_filter(function(a)
+    if a == "--inline" or a == "--split" then
+      opts_layout = a:sub(3)
+      return false
+    end
+    return true
+  end, args or {})
   local root, rerr = git.root()
   if not root then
     notify(rerr, vim.log.levels.ERROR)
@@ -811,12 +994,15 @@ function M.open(args)
     win_new = api.nvim_get_current_win(),
   }
   s.tree_root, s.files = tree.build(entries)
+  s.layout = (opts_layout or config.options.layout) == "inline" and "inline" or "split"
   annotate.new_store(s)
   ask.init(s)
   s.on_close = ask.shutdown
   local restored = annotate.restore(s)
-  vim.cmd("leftabove vsplit")
-  s.win_old = api.nvim_get_current_win()
+  if s.layout == "split" then
+    vim.cmd("leftabove vsplit")
+    s.win_old = api.nvim_get_current_win()
+  end
   vim.cmd("topleft vsplit")
   s.win_tree = api.nvim_get_current_win()
   setup_tree(s)
@@ -827,7 +1013,7 @@ function M.open(args)
     group = s.augroup,
     callback = function(ev)
       local win = tonumber(ev.match)
-      if win == s.win_tree or win == s.win_old or win == s.win_new then
+      if not s.switching and (win == s.win_tree or win == s.win_old or win == s.win_new) then
         vim.schedule(function()
           M.close(s)
         end)

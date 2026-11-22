@@ -111,9 +111,22 @@ closing any of the three windows ends the review.
      `<localleader>` like the other keys). Change from the draft: answers
      are threads, not an `answer` annotation kind, because the fork already
      settled that.
-5. **Slice 5:** blame, untracked files toggle, word-diff tuning (native
-   `diffopt` mostly covers it), async file loading with stale-load drop.
-6. Later: jj / hg sources, compare mode, markdown TOC.
+5. **Slice 5: inline layout (done, owner ask 2026-11-21).** One window over
+   the new side (real file when worktree), added lines highlighted, removed
+   lines as ghost virtual rows; deleted files show old content all removed.
+   `--inline` / `layout` / `\i` / `:AnnodiffLayout`. Hunk navigation computed
+   from `vim.diff` (no diff mode); a picker reaches removed lines for
+   `\a` / `\c` / `\d`; their notes and threads render under their ghost row.
+   Sides are now buffers (`buf_old`, `buf_new`) rather than windows, so the
+   old side can exist without being shown.
+6. **Slice 6:** blame, untracked files toggle, intra-line highlights in the
+   inline layout, async file loading with stale-load drop.
+7. Later: jj / hg sources, compare mode, markdown TOC.
+
+**Backlog (owner: keep on the back burner):** a custom-rendered unified view,
+revdiff-style: one read-only buffer with `-` and `+` lines interleaved. Closest
+to revdiff, but no LSP / editing in that view and a bigger build than the
+inline overlay.
 
 ## Code layout
 
