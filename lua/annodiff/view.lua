@@ -4,6 +4,7 @@ local git = require("annodiff.git")
 local tree = require("annodiff.tree")
 local annotate = require("annodiff.annotate")
 local persist = require("annodiff.persist")
+local send = require("annodiff.send")
 
 local api = vim.api
 local M = {}
@@ -115,6 +116,9 @@ local function nav_maps(s, buf, opts)
   map(km.prev_annotation, function()
     annotate.step(s, -1)
   end, "previous annotation")
+  map(km.send, function()
+    send.send(s)
+  end, "send annotations")
   if not opts.tree then
     map(km.toggle_reviewed, function()
       M.toggle_reviewed(s, s.current)
@@ -177,6 +181,7 @@ local function unmap_real(s)
     "next_annotation",
     "prev_annotation",
     "toggle_reviewed",
+    "send",
   }) do
     each_lhs(km[key], function(l)
       pcall(vim.keymap.del, "n", l, { buffer = buf })
@@ -340,6 +345,9 @@ local function setup_tree(s)
       M.toggle_reviewed(s, item.index)
     end
   end, "toggle reviewed")
+  tmap(km.tree_send, function()
+    send.send(s)
+  end, "send annotations")
   tmap(km.filter_annotated, function()
     M.set_filter(s, "annotated")
   end, "show only annotated files")
@@ -573,40 +581,64 @@ end
 
 -- Lifecycle ----------------------------------------------------------------
 
+--- Save, export, history, send-on-close. Everything a review does on the way out
+--- that does not touch windows (also runs when Neovim exits).
 ---@param s annodiff.Session
-function M.close(s)
+local function finish(s)
+  if not s.store then
+    return
+  end
+  annotate.sync(s)
+  annotate.save(s)
+  if s.store:count() > 0 and send.on_close_enabled() and send.command() then
+    send.send(s, { wait = true, quiet_if_same = true })
+  end
+  local qa = s.threads and s.threads:format_history() or ""
+  if s.store:count() == 0 and qa == "" then
+    return
+  end
+  local msg
+  if s.store:count() > 0 then
+    local path = annotate.export(s)
+    msg = path and ("%d annotation(s) saved to %s"):format(s.store:count(), path)
+  end
+  if config.options.history then
+    local files = vim.tbl_filter(function(f)
+      return f ~= ""
+    end, s.store:files())
+    local hist, herr = persist.save_history({
+      root = s.root,
+      ref = s.spec.ref,
+      diff_args = s.spec.diff_args,
+      annotations = s.store:format(),
+      agent_qa = qa,
+      files = files,
+    }, config.options.history_dir)
+    if hist then
+      msg = (msg or "review") .. "; history " .. hist
+    elseif herr then
+      notify("history not written: " .. tostring(herr), vim.log.levels.WARN)
+    end
+  end
+  if msg then
+    notify(msg)
+  end
+end
+
+---@param s annodiff.Session
+---@param opts? {leaving?: boolean} leaving: Neovim is exiting, leave the windows alone
+function M.close(s, opts)
   if s.closing then
     return
   end
   s.closing = true
   sessions[s.tab] = nil
-  if s.store then
-    annotate.sync(s)
-    annotate.save(s)
+  if s.on_close then
+    pcall(s.on_close, s)
   end
-  if s.store and s.store:count() > 0 then
-    local path = annotate.export(s)
-    local msg = path and ("%d annotation(s) saved to %s"):format(s.store:count(), path)
-    if config.options.history then
-      local files = vim.tbl_filter(function(f)
-        return f ~= ""
-      end, s.store:files())
-      local hist, herr = persist.save_history({
-        root = s.root,
-        ref = s.spec.ref,
-        diff_args = s.spec.diff_args,
-        annotations = s.store:format(),
-        files = files,
-      }, config.options.history_dir)
-      if hist then
-        msg = (msg or "annotations") .. "; history " .. hist
-      elseif herr then
-        notify("history not written: " .. tostring(herr), vim.log.levels.WARN)
-      end
-    end
-    if msg then
-      notify(msg)
-    end
+  finish(s)
+  if opts and opts.leaving then
+    return
   end
   annotate.clear(s)
   unmap_real(s)
@@ -621,6 +653,13 @@ function M.close(s)
   else
     vim.cmd("enew")
     vim.cmd("only")
+  end
+end
+
+--- Finish every open review (VimLeavePre).
+function M.close_all_leaving()
+  for _, s in pairs(vim.deepcopy(sessions, true)) do
+    M.close(s, { leaving = true })
   end
 end
 

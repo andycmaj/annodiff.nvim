@@ -130,7 +130,7 @@ end
 
 --- History entry in revdiff's layout (app/history Save), so the revdiff skill's
 --- read-latest-history.sh picks annodiff reviews up too.
----@param p {root: string, ref?: string, staged?: boolean, diff_args: string[], annotations: string, files: string[], now?: integer}
+---@param p {root: string, ref?: string, diff_args: string[], annotations: string, agent_qa?: string, files: string[], now?: integer}
 ---@return string content
 function M.history_content(p)
   local now = p.now or os.time()
@@ -145,7 +145,13 @@ function M.history_content(p)
   if ok and vim.trim(hash) ~= "" then
     table.insert(out, "commit: " .. vim.trim(hash))
   end
-  local content = table.concat(out, "\n") .. "\n\n## Annotations\n\n" .. p.annotations
+  local content = table.concat(out, "\n") .. "\n"
+  if p.annotations ~= "" then
+    content = content .. "\n## Annotations\n\n" .. p.annotations
+  end
+  if p.agent_qa and p.agent_qa ~= "" then
+    content = content .. "\n## Agent Q&A\n\n" .. p.agent_qa
+  end
   if #p.files > 0 then
     local args = { "diff", "--no-color", "--no-ext-diff" }
     vim.list_extend(args, p.diff_args)
@@ -164,7 +170,7 @@ end
 
 --- Write a history entry; returns its path.
 function M.save_history(p, base)
-  if p.annotations == "" then
+  if p.annotations == "" and (p.agent_qa or "") == "" then
     return nil
   end
   local now = p.now or os.time()

@@ -28,7 +28,7 @@ lazy.nvim:
 | `:Annodiff A..B` | `A` | `B` |
 | `:Annodiff A...B` | merge base of `A` and `B` | `B` |
 
-`:AnnodiffClose`, `:AnnodiffRefresh`, `:AnnodiffExport [path]` and
+`:AnnodiffClose`, `:AnnodiffRefresh`, `:AnnodiffExport [path]`, `:AnnodiffSend` and
 `:AnnodiffClear[!]` (drop annotations and reviewed marks; `!` skips the prompt)
 act on the review in the current tab.
 Each review opens in its own tab: `tree | old | new`.
@@ -50,6 +50,7 @@ Each review opens in its own tab: `tree | old | new`.
 | `<Space>` | tree | mark the file under the cursor reviewed (✓) |
 | `<localleader>r` | diff windows | mark the open file reviewed |
 | `f` / `F` | tree | show only annotated / only unreviewed files (again to clear); `<Tab>` skips hidden files |
+| `<localleader>s` / `O` (tree) | everywhere | send the annotations to your agent (see below) |
 
 In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
 in normal mode cancels.
@@ -79,6 +80,22 @@ format to `$REVDIFF_HISTORY_DIR` or `~/.config/revdiff/history/<repo>/`, so the
 revdiff Claude skill's "use my latest revdiff annotations" finds it. Set
 `history = false` to turn that off, or `history_dir` to move it.
 
+### Sending to an agent
+
+`:AnnodiffSend` (`\s`, or `O` in the tree) is revdiff's `O` flush with a
+post-flush command: the full current set, in revdiff `##` format, goes on
+stdin to a shell command, and the same snapshot is written to the export file.
+The command comes from `send_command` in `setup()`, then
+`$ANNODIFF_SEND_COMMAND`, then revdiff's `$REVDIFF_POST_FLUSH_COMMAND`. With
+`send_on_close = true` (or `$ANNODIFF_SEND_ON_CLOSE=1`) closing the review or
+quitting Neovim sends the set again if it changed since the last send.
+
+`skills/annodiff/` is a Claude Code skill (`/annodiff`) built on that: it opens
+the review in Neovim beside the Claude pane (a zoomed aug split, or a tmux
+window) and pastes sent notes back into the Claude session, like the revdiff
+`/revdiff` skill. Install it with
+`ln -s "$PWD/skills/annodiff" ~/.claude/skills/annodiff`.
+
 ### Export
 
 `:AnnodiffExport [path]` writes them (atomic, mode 0600); the default path is
@@ -96,6 +113,8 @@ require("annodiff").setup({
   tree_width = 35,
   history = true, -- revdiff-format history entry on close
   history_dir = nil, -- default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
+  send_command = nil, -- sh -c; annotations on stdin
+  send_on_close = false,
   keymaps = {
     next_file = "<Tab>",
     prev_file = "<S-Tab>",
@@ -114,6 +133,8 @@ require("annodiff").setup({
     tree_toggle_reviewed = "<Space>",
     filter_annotated = "f",
     filter_unreviewed = "F",
+    send = "<localleader>s",
+    tree_send = "O",
   },
 })
 ```

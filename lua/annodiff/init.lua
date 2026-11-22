@@ -26,6 +26,16 @@ function M.clear(force)
   require("annodiff.view").clear_current(force)
 end
 
+--- Send the annotations to the configured command (revdiff `O` + post-flush command).
+function M.send()
+  local s = require("annodiff.view").current()
+  if not s then
+    vim.notify("annodiff: no review in this tab", vim.log.levels.WARN)
+    return
+  end
+  return require("annodiff.send").send(s)
+end
+
 function M.refresh()
   require("annodiff.view").refresh_current()
 end

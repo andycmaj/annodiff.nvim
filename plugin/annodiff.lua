@@ -37,3 +37,16 @@ end, { nargs = "?", complete = "file", desc = "Write annotations in revdiff ## f
 vim.api.nvim_create_user_command("AnnodiffClear", function(cmd)
   require("annodiff").clear(cmd.bang)
 end, { bang = true, desc = "Delete this review's annotations and reviewed marks (! skips the prompt)" })
+
+vim.api.nvim_create_user_command("AnnodiffSend", function()
+  require("annodiff").send()
+end, { desc = "Send annotations to the configured command (revdiff post-flush)" })
+
+vim.api.nvim_create_autocmd("VimLeavePre", {
+  group = vim.api.nvim_create_augroup("annodiff_leave", { clear = true }),
+  callback = function()
+    if package.loaded["annodiff.view"] then
+      require("annodiff.view").close_all_leaving()
+    end
+  end,
+})
