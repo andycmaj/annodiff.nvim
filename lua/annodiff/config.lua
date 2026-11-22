@@ -8,6 +8,12 @@ local M = {}
 ---@field select string[]|string|false
 ---@field refresh string|false
 ---@field close string|false
+---@field annotate string|false
+---@field annotate_file string|false
+---@field delete_annotation string|false
+---@field list_annotations string|false
+---@field next_annotation string|false
+---@field prev_annotation string|false
 
 ---@class annodiff.Config
 ---@field tree_width integer
@@ -22,6 +28,12 @@ M.defaults = {
     select = { "<CR>", "o" },
     refresh = "R",
     close = "q",
+    annotate = "<localleader>a",
+    annotate_file = "<localleader>A",
+    delete_annotation = "<localleader>d",
+    list_annotations = "<localleader>l",
+    next_annotation = "<localleader>n",
+    prev_annotation = "<localleader>N",
   },
 }
 

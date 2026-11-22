@@ -96,6 +96,7 @@ end
 ---@field header string
 ---@field collapsed table<string, boolean>
 ---@field current? integer index of the open file
+---@field counts? table<string, integer> annotation count per path
 
 --- Render the tree to lines.
 ---@param root annodiff.TreeDir
@@ -141,7 +142,16 @@ function M.render(root, files, opts)
         origin_col = #text
         text = text .. " ← " .. entry.old_path
       end
+      local count_col
+      local n = opts.counts and opts.counts[entry.path]
+      if n and n > 0 then
+        count_col = #text
+        text = text .. " [" .. n .. "]"
+      end
       local line = add(text, { kind = "file", index = idx })
+      if count_col then
+        table.insert(hls, { line = line, col_start = count_col + 1, col_end = -1, group = "AnnodiffAnnotationCount" })
+      end
       table.insert(hls, {
         line = line,
         col_start = #indent,

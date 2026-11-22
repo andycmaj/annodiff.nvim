@@ -66,10 +66,20 @@ closing any of the three windows ends the review.
        file buffers so macros still work)
    - Not using `]f` / `]h`: LazyVim maps those (treesitter functions,
      gitsigns hunks).
-2. **Slice 2: annotations.** `a` float on a line or visual range, extmark +
-   `virt_lines` + sign, anchored on whichever side the cursor is (old side
-   annotations record `side = "old"`), quickfix list, `:AnnodiffExport` in
-   revdiff `##` format.
+2. **Slice 2: annotations (done).** Keys under `<localleader>` (owner's call,
+   2026-11-21: plain `a` / `A` / `d` are editing keys on the real buffer):
+   `a` line / visual range / edit, `A` file-level, `d` delete, `l` picker
+   (`vim.ui.select`, not quickfix: quickfix jumps would break the review
+   layout), `n` / `N` next / previous across files. Records use revdiff's
+   model (`+` new-side number, `-` old-side number, ` ` context with the
+   new-side number from either window, file-level, ranges, the "hunk" keyword
+   widening). Classification comes from `vim.diff` with options mirrored from
+   `'diffopt'`. Extmarks track edits in the real buffer; diff mode ignores
+   virtual lines, so each annotation gets blank padding at the counterpart
+   line in the other window. `:AnnodiffExport [path]` (default
+   `.git/annodiff/annotations.md`, also written on close), checked
+   byte-identical against revdiff's Go `Parse` + `FormatOutput`. Store is
+   in memory per review; loading it back is slice 3.
 3. **Slice 3: persistence + re-anchoring** in `.git/annodiff/`, reviewed marks
    in the tree, tree filter, history markdown.
 4. **Slice 4: agent.** 4a `:AnnodiffSend` (export on stdin to a configured
@@ -88,6 +98,9 @@ lua/annodiff/config.lua  defaults
 lua/annodiff/git.lua     spec parsing, sides, changed files, show (pure parts unit-tested)
 lua/annodiff/tree.lua    build + render file tree (pure, unit-tested)
 lua/annodiff/view.lua    sessions, tab layout, diff windows, navigation
+lua/annodiff/hunks.lua   line classification (+ / - / context), counterpart rows (pure)
+lua/annodiff/annotations.lua  store, revdiff ## format + parse (pure)
+lua/annodiff/annotate.lua     float input, extmarks, padding, picker, jumps, export
 tests/                   dependency-free runner: nvim --clean --headless -l tests/run.lua
 ```
 

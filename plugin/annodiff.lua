@@ -29,3 +29,7 @@ end, { desc = "Close the review in this tab" })
 vim.api.nvim_create_user_command("AnnodiffRefresh", function()
   require("annodiff").refresh()
 end, { desc = "Reload the changed-file list of the review in this tab" })
+
+vim.api.nvim_create_user_command("AnnodiffExport", function(cmd)
+  require("annodiff").export(cmd.args)
+end, { nargs = "?", complete = "file", desc = "Write annotations in revdiff ## format" })

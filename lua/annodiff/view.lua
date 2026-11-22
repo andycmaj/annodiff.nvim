@@ -2,6 +2,7 @@
 local config = require("annodiff.config")
 local git = require("annodiff.git")
 local tree = require("annodiff.tree")
+local annotate = require("annodiff.annotate")
 
 local api = vim.api
 local M = {}
@@ -49,6 +50,7 @@ local function define_highlights()
   for group, link in pairs(links) do
     api.nvim_set_hl(0, group, { link = link, default = true })
   end
+  annotate.define_highlights()
 end
 
 ---@return annodiff.Session?
@@ -100,10 +102,40 @@ local function nav_maps(s, buf, opts)
       M.close(s)
     end, "close review")
   end
+  map(km.annotate_file, function()
+    annotate.annotate_file(s)
+  end, "file-level annotation")
+  map(km.list_annotations, function()
+    annotate.list(s)
+  end, "list annotations")
+  map(km.next_annotation, function()
+    annotate.step(s, 1)
+  end, "next annotation")
+  map(km.prev_annotation, function()
+    annotate.step(s, -1)
+  end, "previous annotation")
 end
 
 local function diff_maps(s, buf)
   local km = config.options.keymaps
+  each_lhs(km.annotate, function(l)
+    vim.keymap.set("n", l, function()
+      annotate.annotate(s)
+    end, { buffer = buf, silent = true, desc = "annodiff: annotate line" })
+    vim.keymap.set("x", l, function()
+      local a, b = vim.fn.line("v"), vim.fn.line(".")
+      if a > b then
+        a, b = b, a
+      end
+      vim.cmd("normal! \27") -- leave visual mode before the float opens
+      annotate.annotate(s, { a, b })
+    end, { buffer = buf, silent = true, desc = "annodiff: annotate range" })
+  end)
+  each_lhs(km.delete_annotation, function(l)
+    vim.keymap.set("n", l, function()
+      annotate.delete(s)
+    end, { buffer = buf, silent = true, desc = "annodiff: delete annotation" })
+  end)
   each_lhs(km.next_hunk, function(l)
     vim.keymap.set("n", l, function()
       M.step_hunk(s, 1)
@@ -119,13 +151,29 @@ end
 local function unmap_real(s)
   local buf = s.real_buf
   s.real_buf = nil
+  if s.real_autocmd then
+    pcall(api.nvim_del_autocmd, s.real_autocmd)
+    s.real_autocmd = nil
+  end
   if not buf or not api.nvim_buf_is_valid(buf) then
     return
   end
   local km = config.options.keymaps
-  for _, key in ipairs({ "next_file", "prev_file", "next_hunk", "prev_hunk" }) do
+  for _, key in ipairs({
+    "next_file",
+    "prev_file",
+    "next_hunk",
+    "prev_hunk",
+    "annotate",
+    "annotate_file",
+    "delete_annotation",
+    "list_annotations",
+    "next_annotation",
+    "prev_annotation",
+  }) do
     each_lhs(km[key], function(l)
       pcall(vim.keymap.del, "n", l, { buffer = buf })
+      pcall(vim.keymap.del, "x", l, { buffer = buf })
     end)
   end
 end
@@ -169,10 +217,15 @@ end
 ---@param s annodiff.Session
 function M.render_tree(s)
   local header = git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right)
+  local counts = {}
+  for _, file in ipairs(s.store:files()) do
+    counts[file] = s.store:count(file)
+  end
   local lines, map, hls = tree.render(s.tree_root, s.files, {
     header = header,
     collapsed = s.collapsed,
     current = s.current,
+    counts = counts,
   })
   s.map = map
   local buf = s.buf_tree
@@ -314,6 +367,8 @@ function M.open_file(s, index, opts)
   local binary = old_bin or new_bin
 
   api.nvim_set_current_tabpage(s.tab)
+  annotate.sync(s)
+  annotate.clear(s)
   vim.cmd("diffoff!")
   unmap_real(s)
 
@@ -333,6 +388,18 @@ function M.open_file(s, index, opts)
       nav_maps(s, buf, { close = false })
       diff_maps(s, buf)
       s.real_buf = buf
+      -- edits shift hunks: redraw annotations (and their padding) once typing settles
+      s.real_autocmd = api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+        group = s.augroup,
+        buffer = buf,
+        callback = function()
+          vim.schedule(function()
+            if s.real_buf == buf and valid(s) then
+              annotate.render(s)
+            end
+          end)
+        end,
+      })
     else
       show_scratch(s, s.win_new, scratch(s, new_lines or {}, entry.path), right_name)
     end
@@ -345,6 +412,7 @@ function M.open_file(s, index, opts)
   end
 
   s.current = index
+  annotate.render(s)
   for _, dir in ipairs(tree.ancestors(entry.path)) do
     s.collapsed[dir] = nil
   end
@@ -419,6 +487,13 @@ function M.close(s)
   end
   s.closing = true
   sessions[s.tab] = nil
+  if s.store and s.store:count() > 0 then
+    local path = annotate.export(s)
+    if path then
+      notify(("%d annotation(s) saved to %s"):format(s.store:count(), path))
+    end
+  end
+  annotate.clear(s)
   unmap_real(s)
   pcall(api.nvim_del_augroup_by_id, s.augroup)
   if not api.nvim_tabpage_is_valid(s.tab) then
@@ -473,6 +548,20 @@ function M.refresh(s)
   end
 end
 
+---@param path? string
+function M.export_current(path)
+  local s = M.current()
+  if not s then
+    notify("no review in this tab", vim.log.levels.WARN)
+    return
+  end
+  local written = annotate.export(s, path)
+  if written then
+    notify(("%d annotation(s) written to %s"):format(s.store:count(), written))
+  end
+  return written
+end
+
 function M.refresh_current()
   local s = M.current()
   if not s then
@@ -523,6 +612,7 @@ function M.open(args)
     win_new = api.nvim_get_current_win(),
   }
   s.tree_root, s.files = tree.build(entries)
+  annotate.new_store(s)
   vim.cmd("leftabove vsplit")
   s.win_old = api.nvim_get_current_win()
   vim.cmd("topleft vsplit")

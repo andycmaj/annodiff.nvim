@@ -15,6 +15,12 @@ function M.close()
   require("annodiff.view").close_current()
 end
 
+--- Write the review's annotations in revdiff `##` format.
+---@param path? string default <git-dir>/annodiff/annotations.md
+function M.export(path)
+  return require("annodiff.view").export_current(path)
+end
+
 function M.refresh()
   require("annodiff.view").refresh_current()
 end
