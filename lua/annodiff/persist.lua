@@ -175,7 +175,9 @@ function M.save_history(p, base)
   end
   local now = p.now or os.time()
   local ms = math.floor((vim.uv.hrtime() / 1e6) % 1000)
-  local name = ("%s.%03d-%s.md"):format(os.date("%Y-%m-%dT%H-%M-%S", now), ms, ("%08x"):format(math.random(0, 0x7fffffff)))
+  local name = ("%s.%03d-%s.md"):format(os.date("%Y-%m-%dT%H-%M-%S", now), ms, vim.uv.random(4):gsub(".", function(c)
+    return ("%02x"):format(c:byte())
+  end))
   local path = vim.fs.joinpath(M.history_dir(p.root, base), name)
   local ok, err = M.write_atomic(path, M.history_content(p))
   if not ok then

@@ -5,7 +5,8 @@ with the worktree side as your real, editable file (LSP, treesitter, gitsigns
 all work). Neovim port of [revdiff](https://github.com/andycmaj/revdiff).
 Annotate lines, ranges and files; export in revdiff's `##` format so the
 revdiff agent skills read it unchanged. Annotations and reviewed marks persist
-per review and follow the code when it moves. Agent handoff comes next (see
+per review and follow the code when it moves. Send them to an agent, or ask
+a read-only agent about a line and read the answer in place (see
 [docs/plan.md](docs/plan.md)).
 
 Neovim 0.10+, no dependencies.
@@ -51,6 +52,8 @@ Each review opens in its own tab: `tree | old | new`.
 | `<localleader>r` | diff windows | mark the open file reviewed |
 | `f` / `F` | tree | show only annotated / only unreviewed files (again to clear); `<Tab>` skips hidden files |
 | `<localleader>s` / `O` (tree) | everywhere | send the annotations to your agent (see below) |
+| `<localleader>c` | diff windows (normal / visual) | ask the agent about the line or range; on a line with a thread, open it |
+| `<localleader>C` | everywhere | ask about the whole file, or open its thread |
 
 In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
 in normal mode cancels.
@@ -96,6 +99,35 @@ window) and pastes sent notes back into the Claude session, like the revdiff
 `/revdiff` skill. Install it with
 `ln -s "$PWD/skills/annodiff" ~/.claude/skills/annodiff`.
 
+### Asking an agent inline
+
+`\c` (or `\C` for the file) asks a headless `claude -p` a question about the
+line, range or file. The answer streams in under the line (the last few rows,
+with `+N more` when there is more), separate from annotations: questions and
+answers are never exported or sent, only written to the history entry as
+`## Agent Q&A`. This is a port of the revdiff fork's ask-agent
+(`feat/ask-agent`), with the same agent setup:
+
+- read-only: `Read`, `Glob`, `Grep` and an allowlist of read-only `git` / `jj`
+  / `hg` commands; edits, web access and config overrides are refused,
+  `--permission-mode dontAsk`, user settings only, no MCP servers
+- the prompt (file, line, change type, the diff around the line, the review
+  scope, your question) goes on stdin, run from the repo root
+- each thread forks `$ANNODIFF_AGENT_PARENT_SESSION` (or revdiff's
+  `$REVDIFF_AGENT_PARENT_SESSION`, `claude:<id>`) when set, so the agent
+  starts with that session's context; the `/annodiff` skill sets it to the
+  calling Claude session
+- stalls show `no output for Ns`; after 5 silent minutes the agent is stopped
+
+`\c` on a line that has a thread opens it in a window: `c` follow-up (resumes
+the thread's session) or retry after a failure, `y` promote the answer to an
+annotation (an existing annotation there is kept above it), `x` cancel, `d`
+delete, `q` close. The tree header shows `⟢ N answering` while answers stream.
+Threads live for the review; refresh drops threads whose file left it.
+
+The question and that context go to the `claude` CLI; annodiff sends nothing
+anywhere itself. Turn the feature off with `agent = false`.
+
 ### Export
 
 `:AnnodiffExport [path]` writes them (atomic, mode 0600); the default path is
@@ -115,6 +147,12 @@ require("annodiff").setup({
   history_dir = nil, -- default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
   send_command = nil, -- sh -c; annotations on stdin
   send_on_close = false,
+  agent = { -- false turns inline questions off
+    binary = "claude",
+    model = nil, -- e.g. "haiku"
+    args = {}, -- extra CLI arguments, appended last
+    system_prompt = nil, -- replaces the default answer guidance
+  },
   keymaps = {
     next_file = "<Tab>",
     prev_file = "<S-Tab>",
@@ -135,6 +173,8 @@ require("annodiff").setup({
     filter_unreviewed = "F",
     send = "<localleader>s",
     tree_send = "O",
+    ask = "<localleader>c",
+    ask_file = "<localleader>C",
   },
 })
 ```

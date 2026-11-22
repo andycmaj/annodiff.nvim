@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"s-sub"}
+not json at all
+{"type":"stream_event","event":{"type":"message_start"},"parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"top"}},"parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}},"parent_tool_use_id":"toolu_1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"func\tmain\n"}}]},"parent_tool_use_id":"toolu_1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git log -1"}}]},"parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hmm"}},"parent_tool_use_id":null}

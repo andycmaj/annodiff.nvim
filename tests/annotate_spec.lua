@@ -57,6 +57,17 @@ local function virt_text(mark)
   return out
 end
 
+--- Text rows drawn at a row (above or below it), from every mark there.
+local function text_at(buf, row, above)
+  local out = {}
+  for _, m in ipairs(api.nvim_buf_get_extmarks(buf, annotate.ns, { row, 0 }, { row, -1 }, { details = true })) do
+    if m[4].virt_lines and (m[4].virt_lines_above or false) == above then
+      vim.list_extend(out, virt_text(m))
+    end
+  end
+  return out
+end
+
 local function records(s)
   local out = {}
   for _, file in ipairs(s.store:files()) do
@@ -91,7 +102,7 @@ describe("annotations in a review", function()
     local m = marks(api.nvim_win_get_buf(s.win_new))
     eq(1, #m)
     eq(1, m[1][2]) -- row 1 = line 2
-    eq({ "  ▍ bump b" }, virt_text(m[1]))
+    eq({ "  ▍ bump b" }, text_at(api.nvim_win_get_buf(s.win_new), 1, false))
   end)
 
   it("tree shows the count", function()
@@ -139,14 +150,7 @@ describe("annotations in a review", function()
     press("\\Awhole file note<C-s>")
     local a = s.store:find("app.lua", 0, "")
     eq("whole file note", a.text)
-    local found = false
-    for _, m in ipairs(marks(api.nvim_win_get_buf(s.win_new))) do
-      if m[4].virt_lines_above then
-        found = true
-        eq({ "  ▍ file: whole file note" }, virt_text(m))
-      end
-    end
-    eq(true, found)
+    eq({ "  ▍ file: whole file note" }, text_at(api.nvim_win_get_buf(s.win_new), 0, true))
   end)
 
   it("both windows stay row-aligned with annotations drawn", function()

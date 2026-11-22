@@ -93,9 +93,24 @@ closing any of the three windows ends the review.
    revdiff skill's `read-latest-history.sh` returns annodiff reviews;
    checked live. `:AnnodiffClear[!]`. Later: reset a reviewed mark when the
    file's diff changes after it was marked.
-4. **Slice 4: agent.** 4a `:AnnodiffSend` (export on stdin to a configured
-   command, e.g. the aug / Claude handoff). 4b ask on a line/range with
-   `claude -p`, answer inline as an `answer` annotation.
+4. **Slice 4: agent (done).**
+   - 4a `:AnnodiffSend` (`\s`, `O` in the tree): revdiff's `O` flush +
+     post-flush command (`send_command`, `$ANNODIFF_SEND_COMMAND`,
+     `$REVDIFF_POST_FLUSH_COMMAND`), snapshot on stdin and to the export file;
+     `send_on_close`. `skills/annodiff` mirrors the owner's `/revdiff` skill
+     (open beside the Claude pane, paste sends back). VimLeavePre now
+     finishes open reviews.
+   - 4b ask-agent, ported from the revdiff fork's `feat/ask-agent` rather
+     than redesigned: same hermetic read-only `claude -p` args, prompt on
+     stdin, stream-json parser (checked against revdiff's recorded fixtures),
+     fork from a tagged parent session, resume for follow-ups, stall / idle
+     handling, process-group cancel. Threads are separate from annotations
+     (not exported or sent; `## Agent Q&A` in history). Inline preview = last
+     4 answer rows + `+N more`; thread window with follow-up / retry /
+     promote / cancel / delete. Keys `\c` / `\C` (revdiff `c`, under
+     `<localleader>` like the other keys). Change from the draft: answers
+     are threads, not an `answer` annotation kind, because the fork already
+     settled that.
 5. **Slice 5:** blame, untracked files toggle, word-diff tuning (native
    `diffopt` mostly covers it), async file loading with stale-load drop.
 6. Later: jj / hg sources, compare mode, markdown TOC.

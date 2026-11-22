@@ -5,6 +5,7 @@ local tree = require("annodiff.tree")
 local annotate = require("annodiff.annotate")
 local persist = require("annodiff.persist")
 local send = require("annodiff.send")
+local ask = require("annodiff.ask")
 
 local api = vim.api
 local M = {}
@@ -53,6 +54,7 @@ local function define_highlights()
     api.nvim_set_hl(0, group, { link = link, default = true })
   end
   annotate.define_highlights()
+  ask.define_highlights()
 end
 
 ---@return annodiff.Session?
@@ -119,6 +121,9 @@ local function nav_maps(s, buf, opts)
   map(km.send, function()
     send.send(s)
   end, "send annotations")
+  map(km.ask_file, function()
+    ask.ask_file(s)
+  end, "ask the agent about the file")
   if not opts.tree then
     map(km.toggle_reviewed, function()
       M.toggle_reviewed(s, s.current)
@@ -140,6 +145,19 @@ local function diff_maps(s, buf)
       vim.cmd("normal! \27") -- leave visual mode before the float opens
       annotate.annotate(s, { a, b })
     end, { buffer = buf, silent = true, desc = "annodiff: annotate range" })
+  end)
+  each_lhs(km.ask, function(l)
+    vim.keymap.set("n", l, function()
+      ask.ask(s)
+    end, { buffer = buf, silent = true, desc = "annodiff: ask the agent / open thread" })
+    vim.keymap.set("x", l, function()
+      local a, b = vim.fn.line("v"), vim.fn.line(".")
+      if a > b then
+        a, b = b, a
+      end
+      vim.cmd("normal! \27")
+      ask.ask(s, { a, b })
+    end, { buffer = buf, silent = true, desc = "annodiff: ask the agent about the range" })
   end)
   each_lhs(km.delete_annotation, function(l)
     vim.keymap.set("n", l, function()
@@ -182,6 +200,8 @@ local function unmap_real(s)
     "prev_annotation",
     "toggle_reviewed",
     "send",
+    "ask",
+    "ask_file",
   }) do
     each_lhs(km[key], function(l)
       pcall(vim.keymap.del, "n", l, { buffer = buf })
@@ -260,6 +280,10 @@ function M.render_tree(s)
   local summary = reviewed > 0 and (" · %d reviewed"):format(reviewed) or ""
   if s.filter then
     summary = summary .. " · only " .. s.filter
+  end
+  local answering = s.threads and s.threads:streaming() or 0
+  if answering > 0 then
+    summary = summary .. (" · ⟢ %d answering"):format(answering)
   end
   local lines, map, hls = tree.render(s.tree_root, s.files, {
     header = header,
@@ -681,6 +705,10 @@ function M.refresh(s)
   end
   local path = s.current and s.files[s.current] and s.files[s.current].path
   s.tree_root, s.files = tree.build(entries)
+  local dropped = ask.retain(s)
+  if dropped > 0 then
+    notify(("%d agent thread(s) dropped: their files left the review"):format(dropped))
+  end
   local index = 1
   for i, e in ipairs(s.files) do
     if e.path == path then
@@ -784,6 +812,8 @@ function M.open(args)
   }
   s.tree_root, s.files = tree.build(entries)
   annotate.new_store(s)
+  ask.init(s)
+  s.on_close = ask.shutdown
   local restored = annotate.restore(s)
   vim.cmd("leftabove vsplit")
   s.win_old = api.nvim_get_current_win()
