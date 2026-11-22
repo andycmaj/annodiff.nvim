@@ -165,11 +165,31 @@ answers are never exported or sent, only written to the history entry as
   calling Claude session
 - stalls show `no output for Ns`; after 5 silent minutes the agent is stopped
 
+![Asking about a range: the question float titled with the selected lines](docs/images/ask-question.png)
+
+*Select lines 10-12 and press `\c`. The float's title names the range; type
+the question and press `<C-s>`.*
+
+![The question under the range while the agent reads a file, the tree header counting threads still answering](docs/images/ask-streaming.png)
+
+*While it works, the row under the question shows what the agent is doing and
+the tree header counts `⟢ 1 answering`.*
+
+![The answer's last rows under the range, with a count of the rows left](docs/images/ask-answer.png)
+
+*The answer's last rows stay under the range; `+N more` points to the full
+thread.*
+
 `\c` on a line that has a thread opens it in a window: `c` follow-up (resumes
 the thread's session) or retry after a failure, `y` promote the answer to an
 annotation (an existing annotation there is kept above it), `x` cancel, `d`
 delete, `q` close. The tree header shows `⟢ N answering` while answers stream.
 Threads live for the review; refresh drops threads whose file left it.
+
+![The thread window: question, full answer and the thread keys](docs/images/ask-thread.png)
+
+*`\c` on the line again opens the whole thread, with follow-up, promote,
+cancel and delete keys.*
 
 The question and that context go to the `claude` CLI; annodiff sends nothing
 anywhere itself. Turn the feature off with `agent = false`.
