@@ -22,7 +22,7 @@ lazy.nvim:
 
 ```lua
 return {
-  dir = "~/workspace/andycmaj/annodiff.nvim",
+  dir = "andycmaj/annodiff.nvim",
   name = "annodiff.nvim",
   cmd = { "Annodiff", "AnnodiffClose", "AnnodiffRefresh", "AnnodiffExport", "AnnodiffSend", "AnnodiffClear" },
   opts = {
