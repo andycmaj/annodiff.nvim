@@ -134,6 +134,9 @@ local function nav_maps(s, buf, opts)
   map(km.send, function()
     send.send(s)
   end, "send annotations")
+  map(km.quit, function()
+    M.quit()
+  end, "send unsent annotations and quit Neovim")
   map(km.ask_file, function()
     ask.ask_file(s)
   end, "ask the agent about the file")
@@ -218,6 +221,7 @@ local function unmap_real(s)
     "prev_annotation",
     "toggle_reviewed",
     "send",
+    "quit",
     "ask",
     "ask_file",
     "toggle_layout",
@@ -934,8 +938,10 @@ local function finish(s)
   end
   annotate.sync(s)
   annotate.save(s)
-  if s.store:count() > 0 and send.on_close_enabled() and send.command() then
-    send.send(s, { wait = true, quiet_if_same = true })
+  -- \q (quit) flushes even when send-on-close is off
+  local mode = send.on_close_mode() or (s.flush and "changed")
+  if mode and send.command() and (s.store:count() > 0 or mode == "always") then
+    send.send(s, { wait = true, quiet_if_same = true, reason = "close", always = mode == "always" })
   end
   local qa = s.threads and s.threads:format_history() or ""
   if s.store:count() == 0 and qa == "" then
@@ -998,6 +1004,26 @@ function M.close(s, opts)
   else
     vim.cmd("enew")
     vim.cmd("only")
+  end
+end
+
+--- How \q leaves Neovim; tests replace it.
+M.quit_command = "confirm qall"
+
+--- \q: send what is unsent, close every review and quit Neovim. Unsaved buffers get
+--- the usual confirm prompt; cancelling it leaves everything open.
+function M.quit()
+  for _, s in pairs(sessions) do
+    s.flush = true
+  end
+  -- VimLeavePre (close_all_leaving) finishes the reviews: save, export, send
+  local ok, err = pcall(vim.cmd, M.quit_command)
+  -- still here: quitting was cancelled (or the command does not exit)
+  for _, s in pairs(sessions) do
+    s.flush = nil
+  end
+  if not ok and not tostring(err):find("E37") and not tostring(err):find("E162") then
+    notify("quit failed: " .. tostring(err), vim.log.levels.ERROR)
   end
 end
 

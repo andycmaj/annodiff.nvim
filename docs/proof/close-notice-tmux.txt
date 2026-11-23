@@ -1,0 +1,47 @@
+# Live proof (RIKER-0213): real tmux server, real nvim (empty config), real open.sh + deliver.sh.
+# Pane %0 runs `cat` in place of the Claude session; what it shows is what Claude would receive.
+# Produced by docs/proof/close-notice-tmux.sh <checkout> <scratch dir>.
+
+## 1. open a review, close it with q, no annotations
+opened annodiff (HEAD) in a new tmux window, in $SCRATCH/proofrepo; notes will be sent to pane %0
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+<ff://1/tree [-] 3,1            All annodiff://1/HEAD/f.txt [-][RO]            2,1            All f.txt                                       2,1            All
+~
+[No Name]                                                                                                                                     0,0-1          All
+annodiff: closed with no annotations (told the agent)
+----- claude pane (%0) -----
+annodiff review closed (from /annodiff nvim): no annotations, so no edits or suggestions. The review is done; nothing to change.
+-------------------------------
+## 1b. then :q Neovim: no second message (the close already reported)
+----- claude pane (%0) -----
+annodiff review closed (from /annodiff nvim): no annotations, so no edits or suggestions. The review is done; nothing to change.
+-------------------------------
+
+## 2. a review that fails to open (bad ref), then :q
+opened annodiff (no-such-ref) in a new tmux window, in $SCRATCH/proofrepo; notes will be sent to pane %0
+Error in command line:
+annodiff: unknown revision: no-such-ref
+Press ENTER or type command to continue
+----- claude pane (%0) -----
+annodiff exited (from /annodiff nvim) without closing a review (it may have failed to open: no changes, a bad ref): no annotations, so no edits or suggestions.
+Nothing to change.
+-------------------------------
+
+## 3. annotate line 2, then \q (flush and quit Neovim)
+opened annodiff (HEAD) in a new tmux window, in $SCRATCH/proofrepo; notes will be sent to pane %0
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+<ff://1/tree [-] 3,1            All annodiff://1/HEAD/f.txt [-][RO]            2,1            All f.txt                                       2,1            All
+annodiff window still there? 0
+----- claude pane (%0) -----
+annodiff annotations (from /annodiff nvim; the review is closed, this is the final set):
+## f.txt:2 (+)
+make it lowercase
+-------------------------------

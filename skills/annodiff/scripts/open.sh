@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Open :Annodiff in Neovim beside the calling Claude pane. Notes sent with \s (or O in
-# the tree), and any unsent notes on close, are pasted back into that pane.
+# the tree), and any unsent notes on close, are pasted back into that pane; every close
+# (and a Neovim exit with no review closed) pastes a line saying so, notes or not.
 # usage: open.sh [annodiff args...]
 #   No args: nothing opens; "needs_ask: true" is printed with the kinds of diff that
 #   apply here (see choices below), for the skill to ask which one.
@@ -130,11 +131,17 @@ case " ${args[*]} " in *" --pr "* | *" --pr="*)
 esac
 
 argstr=""; for a in "${args[@]}"; do argstr+=" $(printf '%q' "$a")"; done
-env_prefix="ANNODIFF_SEND_COMMAND=$(printf '%q' "$(printf '%q' "$dir/deliver.sh") $(printf '%q' "$TMUX_PANE")") ANNODIFF_SEND_ON_CLOSE=1"
+deliver="$(printf '%q' "$dir/deliver.sh") $(printf '%q' "$TMUX_PANE")"
+# always: every close runs deliver.sh, notes or not, so this session hears the review
+# ended (no annotations = no edits or suggestions) instead of waiting on nothing
+env_prefix="ANNODIFF_SEND_COMMAND=$(printf '%q' "$deliver") ANNODIFF_SEND_ON_CLOSE=always"
 # inline agent threads fork from this Claude session
 [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && env_prefix+=" ANNODIFF_AGENT_PARENT_SESSION=$(printf '%q' "claude:$CLAUDE_CODE_SESSION_ID")"
 vimcmd="set rtp^=$plugin | runtime plugin/annodiff.lua | Annodiff$argstr"
-cmd="env $env_prefix nvim -c $(printf '%q' "$vimcmd")"
+# When Neovim exits without any review having closed (it failed to open: no changes, a
+# bad ref), deliver.sh says so too; the mark tells it a close already reported.
+mark="$(mktemp -d "${TMPDIR:-/tmp}/annodiff-closed.XXXXXX")/closed"
+cmd="export ANNODIFF_CLOSED_MARK=$(printf '%q' "$mark"); env $env_prefix nvim -c $(printf '%q' "$vimcmd"); ANNODIFF_SEND_REASON=exit $deliver </dev/null"
 # inside a riker (formerly aug) task window: a zoomed split of this window, so it shows in its viewer
 tools="$(tmux display-message -p -t "$TMUX_PANE" '#{@riker_tools}' 2>/dev/null || true)"
 [ -n "$tools" ] || tools="$(tmux display-message -p -t "$TMUX_PANE" '#{@aug_tools}' 2>/dev/null || true)"

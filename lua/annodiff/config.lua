@@ -20,6 +20,7 @@ local M = {}
 ---@field filter_unreviewed string|false
 ---@field send string|false
 ---@field tree_send string|false
+---@field quit string|false
 ---@field ask string|false
 ---@field ask_file string|false
 ---@field toggle_layout string|false
@@ -30,7 +31,7 @@ local M = {}
 ---@field history boolean write a revdiff-format history entry when a review with annotations closes
 ---@field history_dir? string default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
 ---@field send_command? string default $ANNODIFF_SEND_COMMAND, then $REVDIFF_POST_FLUSH_COMMAND
----@field send_on_close boolean also when $ANNODIFF_SEND_ON_CLOSE=1
+---@field send_on_close boolean|"always" also $ANNODIFF_SEND_ON_CLOSE=1|always; "always": run the command on every close, empty stdin when nothing is new
 ---@field agent annodiff.AgentConfig|false
 ---@field keymaps annodiff.Keymaps
 M.defaults = {
@@ -39,7 +40,7 @@ M.defaults = {
   history = true,
   history_dir = nil,
   send_command = nil, -- sh -c command; annotations on stdin (revdiff post-flush-command)
-  send_on_close = false, -- also send on close when the set changed since the last send
+  send_on_close = false, -- also send on close when the set changed since the last send; "always": on every close, empty stdin when nothing is new
   -- inline questions to a read-only `claude -p`; false turns the feature off
   agent = {
     binary = "claude",
@@ -67,6 +68,7 @@ M.defaults = {
     filter_unreviewed = "F",
     send = "<localleader>s",
     tree_send = "O",
+    quit = "<localleader>q", -- send unsent annotations, close the reviews, quit Neovim
     ask = "<localleader>c", -- diff windows, normal / visual; opens the thread if there is one
     ask_file = "<localleader>C",
     toggle_layout = "<localleader>i",

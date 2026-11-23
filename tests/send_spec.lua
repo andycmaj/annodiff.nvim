@@ -156,3 +156,139 @@ describe("send", function()
     vim.cmd("silent! tabonly")
   end)
 end)
+
+-- The /annodiff skill does not block: Claude ends its turn once Neovim is open. Every
+-- close must reach the send command, notes or not, or a review closed with no notes
+-- leaves the agent waiting on nothing.
+describe("close notice (send_on_close = always)", function()
+  local repo = vim.fn.resolve(vim.fn.tempname())
+  vim.fn.mkdir(repo, "p")
+  sh(repo, { "git", "init", "-q", "-b", "main" })
+  vim.fn.writefile({ "a", "b" }, repo .. "/f.txt")
+  sh(repo, { "git", "add", "-A" })
+  sh(repo, { "git", "commit", "-q", "-m", "init" })
+  vim.fn.writefile({ "a", "B" }, repo .. "/f.txt")
+  local out = repo .. "/sent.txt"
+  local calls = repo .. "/calls.txt"
+  -- stdin to out; one line per run: reason, count, stdin bytes
+  local cmd = ([[cat > %s; printf '%%s %%s %%s\n' "$ANNODIFF_SEND_REASON" "$ANNODIFF_ANNOTATION_COUNT" "$(wc -c < %s | tr -d ' ')" >> %s]]):format(
+    vim.fn.shellescape(out),
+    vim.fn.shellescape(out),
+    vim.fn.shellescape(calls)
+  )
+  local function runs()
+    local t = vim.trim(read(calls) or "")
+    return t == "" and {} or vim.split(t, "\n")
+  end
+  local function open()
+    vim.cmd.cd(repo)
+    quiet(function()
+      vim.cmd("Annodiff HEAD")
+    end)
+    return require("annodiff.view").current()
+  end
+  local function close()
+    return quiet(function()
+      vim.cmd("AnnodiffClose")
+    end)
+  end
+  local function setup(on_close)
+    os.remove(calls)
+    os.remove(out)
+    config.options.send_command = cmd
+    config.options.send_on_close = on_close
+  end
+
+  it("closing with no annotations runs the command with empty stdin, reason close, count 0", function()
+    setup("always")
+    open()
+    local msgs = close()
+    eq({ "close 0 0" }, runs())
+    truthy(vim.tbl_contains(msgs, "annodiff: closed with no annotations (told the agent)"), vim.inspect(msgs))
+  end)
+
+  it("the env var turns it on too: ANNODIFF_SEND_ON_CLOSE=always", function()
+    setup(false)
+    vim.env.ANNODIFF_SEND_ON_CLOSE = "always"
+    open()
+    close()
+    vim.env.ANNODIFF_SEND_ON_CLOSE = nil
+    eq({ "close 0 0" }, runs())
+  end)
+
+  it("plain send_on_close (=1) still runs nothing when there is nothing to send", function()
+    setup(false)
+    vim.env.ANNODIFF_SEND_ON_CLOSE = "1"
+    open()
+    close()
+    vim.env.ANNODIFF_SEND_ON_CLOSE = nil
+    eq({}, runs())
+  end)
+
+  it("\\s says reason send; closing after it with nothing new sends an empty notice with the count", function()
+    setup("always")
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\anote<C-s>")
+    quiet(function()
+      require("annodiff.send").send(s, { wait = true })
+    end)
+    eq({ "send 1 " .. #"## f.txt:2 (+)\nnote\n" }, runs())
+    local msgs = close()
+    eq({ "send 1 20", "close 1 0" }, runs())
+    truthy(vim.tbl_contains(msgs, "annodiff: closed, nothing new to send (told the agent)"), vim.inspect(msgs))
+  end)
+
+  it("closing with unsent notes sends them once, as the close", function()
+    setup("always")
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccchanged<C-s>")
+    close()
+    eq({ "close 1 23" }, runs())
+    eq("## f.txt:2 (+)\nchanged\n", read(out))
+  end)
+
+  it("\\q sends unsent notes and quits, even with send_on_close off", function()
+    setup(false)
+    local view = require("annodiff.view")
+    local quit_ran = false
+    view.quit_command = "lua _G.__annodiff_quit()"
+    _G.__annodiff_quit = function()
+      quit_ran = true
+      vim.api.nvim_exec_autocmds("VimLeavePre", {}) -- what :qall does on the way out
+    end
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccflushed<C-s>")
+    quiet(function()
+      press("\\q")
+    end)
+    truthy(quit_ran, "\\q quits Neovim")
+    eq({ "close 1 23" }, runs())
+    eq("## f.txt:2 (+)\nflushed\n", read(out))
+    eq(nil, view.current(), "the review is finished")
+  end)
+
+  it("\\q with nothing new and send_on_close off sends nothing; a cancelled quit keeps the review", function()
+    setup(false)
+    local view = require("annodiff.view")
+    view.quit_command = "lua _G.__annodiff_quit()"
+    _G.__annodiff_quit = function() end -- the confirm prompt was cancelled
+    local s = open()
+    quiet(function()
+      press("\\q")
+    end)
+    eq({}, runs())
+    eq(s, view.current(), "still open")
+    eq(nil, s.flush, "a later close is an ordinary close")
+    view.quit_command = "confirm qall"
+    config.options.send_on_close = false
+    config.options.send_command = nil
+    close()
+    vim.cmd("tabnew")
+    vim.cmd("silent! tabonly")
+  end)
+end)

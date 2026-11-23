@@ -1,0 +1,33 @@
+# Red before the fix: tests/send_spec.lua from this change run against 123bab6 (unfixed).
+# Closing with no annotations ran nothing ({}), so the agent never heard the review ended.
+
+  ok   send > without a command it says how to set one and runs nothing
+  ok   send > \s pipes the full set to the command on stdin
+  ok   send > O in the tree sends too; $REVDIFF_POST_FLUSH_COMMAND is honored
+  ok   send > a failing command reports its stderr
+  ok   send > close sends unsent changes when ANNODIFF_SEND_ON_CLOSE=1, once
+  ok   send > exiting Neovim finishes open reviews (state, export, send)
+  FAIL close notice (send_on_close = always) > closing with no annotations runs the command with empty stdin, reason close, count 0
+tests/send_spec.lua:206: expected:
+       { "close 0 0" }
+       actual:
+       {}
+  FAIL close notice (send_on_close = always) > the env var turns it on too: ANNODIFF_SEND_ON_CLOSE=always
+tests/send_spec.lua:216: expected:
+       { "close 0 0" }
+       actual:
+       {}
+  ok   close notice (send_on_close = always) > plain send_on_close (=1) still runs nothing when there is nothing to send
+  FAIL close notice (send_on_close = always) > \s says reason send; closing after it with nothing new sends an empty notice with the count
+tests/send_spec.lua:236: expected:
+       { "send 1 20" }
+       actual:
+       { "20" }
+  FAIL close notice (send_on_close = always) > closing with unsent notes sends them once, as the close
+tests/send_spec.lua:249: expected:
+       { "close 1 23" }
+       actual:
+       { "23" }
+  FAIL close notice (send_on_close = always) > \q sends unsent notes and quits, even with send_on_close off
+  ok   close notice (send_on_close = always) > \q with nothing new and send_on_close off sends nothing; a cancelled quit keeps the review
+8 passed, 5 failed

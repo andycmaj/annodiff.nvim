@@ -36,13 +36,13 @@ With no arguments, run `open.sh` with none. Nothing opens; it prints `needs_ask:
 After launching:
 
 - Output starts with `error:`: report it and stop.
-- Otherwise Neovim is open beside this session and does not block. Tell the user in one line what it shows and: annotate with `\a` (`\A` whole file), send notes here with `\s` (or `O` in the tree, or just close the review), `\c` asks an inline agent without sending anything here. Then end your turn; do not wait or poll. If the review hits an error (no changes, gh failing, unknown ref), Neovim shows it, not this session.
+- Otherwise Neovim is open beside this session and does not block. Tell the user in one line what it shows and: annotate with `\a` (`\A` whole file), send notes here with `\s` (or `O` in the tree), `\q` sends what is unsent and quits Neovim, `\c` asks an inline agent without sending anything here. Then end your turn; do not wait or poll. Closing the review always sends a message here (see below), so you hear when it ends. If the review hits an error (no changes, gh failing, unknown ref), Neovim shows it, not this session; quitting Neovim then sends an "annodiff exited" message.
 
 A PR is never checked out: when its head is not this worktree's clean HEAD, annodiff fetches `refs/pull/N/head` and its base into the object store and shows the PR head read-only, so line numbers match the PR but the right side is not the file on disk. Edit files only if the user asks; to work on the PR, `gh pr checkout <N>` first (ask if the tree is dirty), then review again with `--pr`, which then uses the worktree.
 
 ## When annotations arrive
 
-They arrive as a user message starting with `annodiff annotations (from /annodiff nvim):`, in revdiff's format:
+They arrive as a user message starting with `annodiff annotations (from /annodiff nvim` (`):` while the review is open, `; the review is closed, ...):` for the final set), in revdiff's format:
 
 ```
 ## file.go:43 (+)
@@ -54,4 +54,13 @@ comment text
 - Notes containing `??` or starting with explain/what/how/why/clarify/describe/remind: answer in chat, no code change.
 - Everything else: a change directive. Make the change.
 
-The right-hand side of the review is the real file, so the user sees your edits live. Tell them to press `R` in the tree if files were added or removed. Do not relaunch. When they close the review without sending anything new, the review is done.
+The right-hand side of the review is the real file, so the user sees your edits live. Tell them to press `R` in the tree if files were added or removed. Do not relaunch.
+
+## When the review closes
+
+Every close sends one message here, notes or not:
+
+- `annodiff annotations (from /annodiff nvim; the review is closed, this is the final set):` then notes: unsent notes at close. Handle them as above; the review is over, so do not wait for more.
+- `annodiff review closed (from /annodiff nvim): no annotations, so no edits or suggestions. ...`: the user looked and had nothing to say. Make no changes. Say in one line that the review came back clean, then carry on with whatever you were doing before the review (or end your turn if that was the last step).
+- `annodiff review closed (from /annodiff nvim): nothing new since the last send; ...`: everything was already sent and handled. Nothing more to do; carry on.
+- `annodiff exited (from /annodiff nvim) without closing a review ...`: Neovim quit before a review closed (usually it failed to open). No notes; say so in one line and carry on.

@@ -136,6 +136,9 @@ printf '%s\n' "$STUB_GH_PR"
     truthy(calls:find("Annodiff HEAD", 1, true), calls)
     truthy(calls:find("deliver.sh", 1, true) and calls:find("%99", 1, true), "deliver.sh targets the calling pane")
     truthy(calls:find("set rtp^=" .. root, 1, true), "loads this checkout's annodiff")
+    truthy(calls:find("ANNODIFF_SEND_ON_CLOSE=always", 1, true), "every close reaches this pane, notes or not")
+    truthy(calls:find("export ANNODIFF_CLOSED_MARK=", 1, true), calls)
+    truthy(calls:find("; ANNODIFF_SEND_REASON=exit [^;]*deliver%.sh %%99 </dev/null"), "an exit with no close is reported")
   end)
 
   it("no args on main with uncommitted changes: asks, uncommitted first, opens nothing", function()
@@ -270,7 +273,7 @@ printf '%s\n' "$STUB_GH_PR"
   end)
 end)
 
-describe("deliver.sh", function()
+describe("deliver.sh: portability and failures", function()
   local script = root .. "/skills/annodiff/scripts/deliver.sh"
   local real_mktemp = vim.fn.exepath("mktemp")
   -- stub tmux: logs argv, and load-buffer's stdin (the message)
@@ -340,6 +343,76 @@ esac
     write(bin .. "/fail2/tmux", "#!/bin/sh\necho \"can't find pane: %99\" >&2\nexit 1\n", "755")
     local res = run({ script, "%99" }, { env = { PATH = bin .. "/fail2:" .. env.PATH }, stdin = note })
     eq(1, res.code)
+  end)
+end)
+
+describe("deliver.sh", function()
+  local deliver = root .. "/skills/annodiff/scripts/deliver.sh"
+  -- stub tmux: load-buffer keeps stdin as the pasted text; every call logs its argv
+  local bin = vim.fn.tempname()
+  local pasted, log = bin .. "/pasted.txt", bin .. "/tmux.log"
+  write(
+    bin .. "/tmux",
+    ([[#!/bin/sh
+[ "$1" = load-buffer ] && cat > %s
+printf '%%s\n' "$*" >> %s
+]]):format(vim.fn.shellescape(pasted), vim.fn.shellescape(log)),
+    "755"
+  )
+  local function deliver_with(stdin, extra)
+    os.remove(pasted)
+    os.remove(log)
+    local env = vim.tbl_extend("force", { PATH = bin .. ":" .. vim.env.PATH }, extra or {})
+    local res = run({ deliver, "%7" }, { env = env, stdin = stdin })
+    eq(0, res.code, res.stderr)
+    return read(pasted), read(log) or ""
+  end
+
+  it("a send pastes the notes under the usual header and submits", function()
+    local text, calls = deliver_with("## a.txt:1 (+)\nfix\n", { ANNODIFF_SEND_REASON = "send", ANNODIFF_ANNOTATION_COUNT = "1" })
+    eq("annodiff annotations (from /annodiff nvim):\n\n## a.txt:1 (+)\nfix\n", text)
+    truthy(calls:find("paste-buffer -b annodiff -p -d -t %7", 1, true), calls)
+    truthy(calls:find("send-keys -t %7 Enter", 1, true), calls)
+  end)
+
+  it("an empty send (no reason: an older annodiff) pastes nothing", function()
+    local text, calls = deliver_with("", {})
+    eq(nil, text)
+    eq("", calls)
+  end)
+
+  it("closing with no annotations tells the agent there are no edits or suggestions", function()
+    local text = deliver_with("", { ANNODIFF_SEND_REASON = "close", ANNODIFF_ANNOTATION_COUNT = "0" })
+    eq(
+      "annodiff review closed (from /annodiff nvim): no annotations, so no edits or suggestions. The review is done; nothing to change.\n",
+      text
+    )
+  end)
+
+  it("closing with nothing new since the last send says the sent set is final", function()
+    local text = deliver_with("", { ANNODIFF_SEND_REASON = "close", ANNODIFF_ANNOTATION_COUNT = "3" })
+    truthy(text:find("^annodiff review closed .*nothing new since the last send; the 3 annotation%(s%) already sent are the final set"), text)
+  end)
+
+  it("closing with unsent notes sends them as the final set", function()
+    local text = deliver_with("## a.txt:1 (+)\nfix\n", { ANNODIFF_SEND_REASON = "close", ANNODIFF_ANNOTATION_COUNT = "1" })
+    eq("annodiff annotations (from /annodiff nvim; the review is closed, this is the final set):\n\n## a.txt:1 (+)\nfix\n", text)
+  end)
+
+  it("Neovim exiting after a close says nothing more; exiting without one says so", function()
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    local mark = dir .. "/closed"
+    deliver_with("", { ANNODIFF_SEND_REASON = "close", ANNODIFF_CLOSED_MARK = mark })
+    truthy(vim.uv.fs_stat(mark), "close leaves the mark")
+    local text, calls = deliver_with("", { ANNODIFF_SEND_REASON = "exit", ANNODIFF_CLOSED_MARK = mark })
+    eq(nil, text)
+    eq("", calls)
+    eq(nil, vim.uv.fs_stat(dir), "the mark and its directory are gone")
+
+    text = deliver_with("", { ANNODIFF_SEND_REASON = "exit", ANNODIFF_CLOSED_MARK = vim.fn.tempname() .. "/closed" })
+    truthy(text:find("^annodiff exited %(from /annodiff nvim%) without closing a review"), text)
+    truthy(text:find("no edits or suggestions", 1, true), text)
   end)
 end)
 

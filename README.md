@@ -211,6 +211,7 @@ annotation, and an agent's answer to `\c` streamed in under the block.*
 | `<localleader>r` | diff windows | mark the open file reviewed |
 | `f` / `F` | tree | show only annotated / only unreviewed files (again to clear); `<Tab>` skips hidden files |
 | `<localleader>s` / `O` (tree) | everywhere | send the annotations to your agent (see below) |
+| `<localleader>q` | everywhere | send what is unsent, close the review and quit Neovim (`:confirm qall`, so unsaved buffers prompt) |
 | `<localleader>c` | diff windows (normal / visual) | ask the agent about the line or range; on a line with a thread, open it |
 | `<localleader>C` | everywhere | ask about the whole file, or open its thread |
 | `<localleader>i` | everywhere | toggle split / inline layout |
@@ -251,7 +252,12 @@ stdin to a shell command, and the same snapshot is written to the export file.
 The command comes from `send_command` in `setup()`, then
 `$ANNODIFF_SEND_COMMAND`, then revdiff's `$REVDIFF_POST_FLUSH_COMMAND`. With
 `send_on_close = true` (or `$ANNODIFF_SEND_ON_CLOSE=1`) closing the review or
-quitting Neovim sends the set again if it changed since the last send.
+quitting Neovim sends the set again if it changed since the last send. With
+`send_on_close = "always"` (or `$ANNODIFF_SEND_ON_CLOSE=always`) every close runs the
+command, with empty stdin when there is nothing new, so whoever launched the review
+hears that it ended even with no notes. The command gets `$ANNODIFF_SEND_REASON`
+(`send`, or `close`) and `$ANNODIFF_ANNOTATION_COUNT` (all annotations, sent or not).
+`\q` sends what is unsent even when `send_on_close` is off, then quits Neovim.
 
 The `/annodiff` Claude Code skill is built on that; see [Claude Code](#claude-code).
 
@@ -336,7 +342,14 @@ From a checkout: `claude --plugin-dir /path/to/annodiff.nvim` (and
 split in a Riker task window, otherwise a new tmux window) and returns at once. Notes you
 send with `\s` (or `O` in the tree, or by closing the review) are pasted into the Claude
 session; Claude answers questions (`??`, explain/what/how/why) and makes the rest as
-changes, which you see live on the worktree side.
+changes, which you see live on the worktree side. `\q` sends what is unsent and quits
+Neovim in one key.
+
+Closing the review always tells Claude, notes or not: unsent notes arrive as the final
+set, and a review closed with nothing to say arrives as `annodiff review closed ...: no
+annotations, so no edits or suggestions`, so Claude carries on instead of waiting. If
+Neovim quits before any review closed (it failed to open: no changes, a bad ref),
+Claude gets `annodiff exited ... without closing a review`.
 
 With no args Claude asks which diff to review, offering only what applies:
 
@@ -366,7 +379,8 @@ contract as revdiff's: annotations on stdout, exit 10 when there are any).
 ### Differences from revdiff's plugin
 
 - The review does not block Claude: notes are pushed into the session as they are sent
-  (revdiff's skill waits on the TUI and reads its stdout). Claude makes changes directly
+  (revdiff's skill waits on the TUI and reads its stdout, where empty output means "quit
+  with no notes"; annodiff sends an explicit close message instead). Claude makes changes directly
   instead of entering plan mode, since the worktree side shows them live.
 - Plan rounds are chained by the session id, not by a marker the agent has to copy into
   its next plan, and no agent-supplied path is read.
@@ -387,7 +401,7 @@ require("annodiff").setup({
   history = true, -- revdiff-format history entry on close
   history_dir = nil, -- default $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
   send_command = nil, -- sh -c; annotations on stdin
-  send_on_close = false,
+  send_on_close = false, -- true: send unsent notes on close; "always": run the command on every close
   agent = { -- false turns inline questions off
     binary = "claude",
     model = nil, -- e.g. "haiku"
@@ -414,6 +428,7 @@ require("annodiff").setup({
     filter_unreviewed = "F",
     send = "<localleader>s",
     tree_send = "O",
+    quit = "<localleader>q",
     ask = "<localleader>c",
     ask_file = "<localleader>C",
     toggle_layout = "<localleader>i",
