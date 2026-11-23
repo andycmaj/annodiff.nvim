@@ -61,7 +61,7 @@ update.
 #### Pinning
 
 `lazy-lock.json` already records the installed commit. To hold a version in the spec
-itself, add one of:
+itself, add one of (`tag` and `version` need release tags on the repo):
 
 ```lua
 branch = "main",        -- track a branch
