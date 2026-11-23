@@ -81,7 +81,13 @@ Annotations, asking the agent, send, export and persistence work as in a diff re
 notes are `( )` lines of the file. With a ref, lines changed since it are marked as in
 the inline layout (added highlighted, removed as ghost rows) and annotate as `(+)` /
 `(-)`; without one, or when the file is empty or missing at the ref, nothing is marked
-until you edit. The file must be in a git repository (state lives in its `.git`).
+until you edit.
+
+The file does not have to be in a git repository. Outside one, the file's directory is
+the review's root, a ref is refused, the state and export live under Neovim's state dir
+(`stdpath("state")/annodiff/docs/`), and no revdiff history entry is written. That is how
+`/annodiff` annotates one of Claude's own messages: it writes the message to a scratch
+`.md` file and opens it with `--doc`.
 
 Why both an explicit flag and auto-detection: a markdown path is never a ref anyone
 means to diff, so `:Annodiff plan.md` can just do the right thing (a readable markdown

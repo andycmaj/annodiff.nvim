@@ -946,7 +946,7 @@ local function finish(s)
     local path = annotate.export(s)
     msg = path and ("%d annotation(s) saved to %s"):format(s.store:count(), path)
   end
-  if config.options.history then
+  if config.options.history and not s.spec.state_dir then -- no history outside a repo
     local files = vim.tbl_filter(function(f)
       return f ~= ""
     end, s.store:files())
@@ -1118,16 +1118,19 @@ local start
 ---@param d annodiff.DocArgs
 ---@return annodiff.Session?
 local function open_doc(d)
-  local file = vim.fn.fnamemodify(vim.fn.expand(d.path), ":p")
-  local root, rerr = git.root(vim.fs.dirname(file))
-  if not root then
-    notify("a document review needs the file in a git repository: " .. tostring(rerr), vim.log.levels.ERROR)
-    return
-  end
-  local rel = doc.relpath(root, file)
+  local file = vim.uv.fs_realpath(vim.fn.fnamemodify(vim.fn.expand(d.path), ":p")) or d.path
+  local root = git.root(vim.fs.dirname(file))
+  local rel = root and doc.relpath(root, file)
+  local state_dir
   if not rel then
-    notify("not inside " .. root .. ": " .. file, vim.log.levels.ERROR)
-    return
+    -- not in a repo (an agent's message in a scratch dir): the file's directory is the
+    -- root, and the review's state lives under Neovim's state dir, keyed by the path
+    if d.ref then
+      notify("a ref needs the file in a git repository", vim.log.levels.ERROR)
+      return
+    end
+    root, rel = vim.fs.dirname(file), vim.fs.basename(file)
+    state_dir = vim.fs.joinpath(vim.fn.stdpath("state"), "annodiff", "docs", vim.fn.sha256(file):sub(1, 12) .. "-" .. rel)
   end
   local snapshot, bin = git.show(root, { kind = "worktree" }, rel)
   if not snapshot or bin then
@@ -1151,6 +1154,7 @@ local function open_doc(d)
     right = { kind = "worktree" },
     diff_args = {},
     label = "doc " .. rel,
+    state_dir = state_dir,
     title = rel .. (base and (" · changes since " .. d.ref) or ""),
     scope = ("the document %s in the working tree%s"):format(
       rel,

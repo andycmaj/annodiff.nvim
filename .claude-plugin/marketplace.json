@@ -9,7 +9,7 @@
       "name": "annodiff",
       "source": "./",
       "description": "Review this branch's diff in Neovim (annodiff.nvim) beside Claude; annotations come back to the session as a message",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "andycmaj"
       }
@@ -18,7 +18,7 @@
       "name": "annodiff-planning",
       "source": "./plugins/annodiff-planning",
       "description": "Review Claude's plans in Neovim (annodiff.nvim) before they run; annotations go back as plan feedback",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "andycmaj"
       }

@@ -1,6 +1,6 @@
 {
   "name": "annodiff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Review this branch's diff in Neovim (annodiff.nvim) beside Claude; annotations come back to the session as a message",
   "author": {
     "name": "andycmaj"

@@ -215,6 +215,34 @@ printf '%s\n' "$STUB_GH_PR"
     truthy(calls:find("Annodiff --staged HEAD", 1, true), calls)
   end)
 
+  it("a document outside any repo opens doc mode from its directory, by absolute path", function()
+    local dir = vim.fn.resolve(vim.fn.tempname())
+    write(dir .. "/turn.md", "# Q\n")
+    local cwd = vim.fn.resolve(vim.fn.tempname()) -- not a repo either
+    vim.fn.mkdir(cwd, "p")
+    local res, calls = open_in(cwd, { dir .. "/turn.md" })
+    eq(0, res.code, res.stderr)
+    truthy(calls:find("Annodiff --doc " .. dir .. "/turn.md", 1, true), calls)
+    truthy(calls:find("-c " .. dir, 1, true), calls)
+    truthy(res.stdout:find("in " .. dir, 1, true), res.stdout)
+    -- --doc forces it for any file; a relative path is made absolute
+    res, calls = open_in(dir, { "--doc", "turn.md" })
+    eq(0, res.code, res.stderr)
+    truthy(calls:find("Annodiff --doc " .. dir .. "/turn.md", 1, true), calls)
+  end)
+
+  it("a document in a repo keeps its ref; a non-document outside a repo is still an error", function()
+    local repo = repo_with({ ["docs/plan.md"] = "# P\n" })
+    local _, calls = open_in(repo, { "docs/plan.md", "HEAD~1" })
+    truthy(calls:find("Annodiff --doc " .. repo .. "/docs/plan.md HEAD~1", 1, true), calls)
+    local res = open_in(vim.fn.tempname():match("^(.*)/"), { "HEAD" })
+    eq(1, res.code)
+    truthy(res.stderr:find("not in a git repo", 1, true), res.stderr)
+    res = open_in(repo, { "--doc", "nope.md" })
+    eq(1, res.code)
+    truthy(res.stderr:find("not a file: nope.md", 1, true), res.stderr)
+  end)
+
   it("in a riker task window opens a zoomed split through riker-tools pane", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
     local tools_log = bin .. "/tools.log"

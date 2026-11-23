@@ -12,6 +12,8 @@ vim.env.GIT_AUTHOR_NAME, vim.env.GIT_AUTHOR_EMAIL = "test", "test@example.com"
 vim.env.GIT_COMMITTER_NAME, vim.env.GIT_COMMITTER_EMAIL = "test", "test@example.com"
 -- Never write review history into the owner's real revdiff history dir.
 vim.env.REVDIFF_HISTORY_DIR = vim.fn.tempname()
+-- ...nor review state of documents outside a repo into the owner's Neovim state dir.
+vim.env.XDG_STATE_HOME = vim.fn.tempname()
 
 local results = { pass = 0, fail = 0 }
 local prefix = {}

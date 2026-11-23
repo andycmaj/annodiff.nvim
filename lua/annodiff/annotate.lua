@@ -779,6 +779,9 @@ end
 --- Default export path: <git-dir>/annodiff/annotations.md
 ---@param s annodiff.Session
 function M.default_path(s)
+  if s.spec.state_dir then
+    return vim.fs.joinpath(s.spec.state_dir, "annotations.md")
+  end
   return vim.fs.joinpath(persist.git_dir(s.root), "annodiff", "annotations.md")
 end
 

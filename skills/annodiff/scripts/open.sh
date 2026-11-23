@@ -19,7 +19,31 @@ fi
 plugin="$(cd "$dir/../../.." && pwd)" # this repo; loaded after the user's config so it wins
 [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || { echo "error: not inside tmux" >&2; exit 1; }
 command -v nvim >/dev/null 2>&1 || { echo "error: nvim not found in PATH" >&2; exit 1; }
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "error: not in a git repo" >&2; exit 1; }
+# A document instead of a diff: `--doc <file> [ref]`, or a markdown file as the first
+# argument. The file can be anywhere, in a repo or not (an agent's message written to a
+# scratch dir); Neovim runs from its repo, else from its directory.
+doc=""
+for a in "$@"; do [ "$a" = --doc ] && doc=1; done
+if [ -z "$doc" ] && [ $# -ge 1 ] && [ -f "$1" ]; then
+  case "$1" in *.md | *.markdown | *.mdx | *.mkd | *.mdown) doc=1 ;; esac
+fi
+if [ -n "$doc" ]; then
+  file="" ref=""
+  for a in "$@"; do
+    case "$a" in
+      --doc | --inline | --split) ;;
+      --*) echo "error: --doc takes a file and a ref, not $a" >&2; exit 1 ;;
+      *) if [ -z "$file" ]; then file="$a"; elif [ -z "$ref" ]; then ref="$a"; fi ;;
+    esac
+  done
+  [ -n "$file" ] && [ -f "$file" ] || { echo "error: not a file: ${file:-(none given)}" >&2; exit 1; }
+  file="$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")"
+  root="$(git -C "$(dirname "$file")" rev-parse --show-toplevel 2>/dev/null)" || root="$(dirname "$file")"
+  doc_args=(--doc "$file")
+  [ -n "$ref" ] && doc_args+=("$ref")
+else
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "error: not in a git repo" >&2; exit 1; }
+fi
 
 # The default branch, as annodiff's --base and Plannotator pick it: origin's default
 # (origin/HEAD) when fetched, else origin/main, main, origin/master, master.
@@ -95,6 +119,7 @@ choices() {
 }
 
 args=("$@")
+[ -n "$doc" ] && args=("${doc_args[@]}")
 [ $# -eq 0 ] && choices
 # a bare PR number (#12, 12) or PR URL is shorthand for --pr
 if [ $# -eq 1 ] && [[ "$1" =~ ^#?[0-9]+$ || "$1" =~ ^https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+ ]]; then

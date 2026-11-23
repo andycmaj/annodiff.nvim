@@ -1,6 +1,6 @@
 ---
 name: annodiff
-description: Review this branch's diff in Neovim (annodiff.nvim) beside this Claude session; annotations sent with \s (and unsent ones on close) arrive back here as a message. Also reads the latest annodiff annotations for this repo, and answers questions about annodiff's keys and config. Use when the user runs /annodiff, or says "annodiff", "review in annodiff", "review in nvim", "use my latest annodiff annotations", "what did I annotate in annodiff".
+description: Review this branch's diff in Neovim (annodiff.nvim) beside this Claude session; annotations sent with \s (and unsent ones on close) arrive back here as a message. Also opens a document or one of your own messages (the last answer, a grill question) in annodiff's doc mode to annotate, reads the latest annodiff annotations for this repo, and answers questions about annodiff's keys and config. Use when the user runs /annodiff, or says "annodiff", "review in annodiff", "review in nvim", "annotate that in annodiff", "annodiff the last turn", "use my latest annodiff annotations", "what did I annotate in annodiff".
 argument-hint: 'optional: what to review, e.g. HEAD, --base [branch], --pr [N|URL], main...HEAD, --staged, --inline, docs/plan.md (none: asks)'
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/open.sh:*), Bash(${CLAUDE_SKILL_DIR}/scripts/read-latest.sh:*)
 ---
@@ -13,6 +13,8 @@ Arguments: `$ARGUMENTS`
 
 - **A question about annodiff** (keys, config, layouts, install): answer from `${CLAUDE_SKILL_DIR}/../../README.md`. Do not open a review.
 - **"Use my latest annodiff annotations"**, "what did I annotate", or notes the user sent that never showed up here: run `${CLAUDE_SKILL_DIR}/scripts/read-latest.sh` and handle what it prints as under "When annotations arrive". It prints the newest of this repo's `.git/annodiff/annotations.md` (written on every send and on close) and its revdiff-format history entries. Empty output means nothing was saved.
+- **One of your own messages** ("the last turn", "your last answer", "the grilling question", "this plan"): write that message's text verbatim, as markdown with its headings, to a new `.md` file named for its subject (your scratchpad directory if you have one, else `$TMPDIR`; no git repo needed), then run `open.sh --doc <absolute path>`. Its notes arrive as `## <name>.md:N ( )`, line N of that file: replies to your message (an answer to a question you asked, a correction, a question back). Answer them in chat; change code only if a note asks for it.
+- **A document** (a plan, spec or README file): `open.sh <file.md>` or `open.sh --doc <file> [ref]`, see below.
 - **A review** (the usual case, and any `/annodiff` with no arguments or with refs): launch below.
 
 ## Launch
@@ -23,7 +25,7 @@ With arguments, run them as given; nothing is asked:
 ${CLAUDE_SKILL_DIR}/scripts/open.sh <annodiff args>
 ```
 
-Annodiff args: `HEAD` (uncommitted: staged + unstaged), `--base [branch]` (everything since the branch forked: merge base vs worktree; default branch when omitted; for a stacked branch, the branch below), `--pr [N|URL]` (a GitHub PR; none means this branch's PR), `<ref>` (ref vs worktree), `A..B`, `A...B`, `--staged [ref]`, plus `--inline` / `--split`. A lone PR number, `#N` or PR URL means `--pr` with it. A document instead of a diff (a plan, a spec, a README): `<file.md>` or `--doc <file> [ref]` (path relative to the repo root) opens doc mode, the file in one buffer with its headings as the tree; with a ref, changes since it are marked. Notes on it arrive in the same format, `( )` for its lines.
+Annodiff args: `HEAD` (uncommitted: staged + unstaged), `--base [branch]` (everything since the branch forked: merge base vs worktree; default branch when omitted; for a stacked branch, the branch below), `--pr [N|URL]` (a GitHub PR; none means this branch's PR), `<ref>` (ref vs worktree), `A..B`, `A...B`, `--staged [ref]`, plus `--inline` / `--split`. A lone PR number, `#N` or PR URL means `--pr` with it. A document instead of a diff (a plan, a spec, a README, a message you wrote to a file): `<file.md>` or `--doc <file> [ref]` opens doc mode, the file in one buffer with its headings as the tree; with a ref (only in a git repo), changes since it are marked. The file may be anywhere, in a repo or not. Notes on it arrive in the same format, `( )` for its lines.
 
 With no arguments, run `open.sh` with none. Nothing opens; it prints `needs_ask: true` and one `option: <label> | <args> | <description>` line per kind of diff that applies here, the recommended one first. Ask with AskUserQuestion, one question ("Which diff should annodiff review?"), the options in the order printed: label as label, description as description, `(Recommended)` after the first label. Then:
 

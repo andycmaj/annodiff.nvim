@@ -45,6 +45,9 @@ end
 ---@param root string
 ---@param spec annodiff.Spec
 function M.state_path(root, spec)
+  if spec.state_dir then
+    return vim.fs.joinpath(spec.state_dir, "review.json")
+  end
   return vim.fs.joinpath(M.git_dir(root), "annodiff", "reviews", M.key(spec) .. ".json")
 end
 

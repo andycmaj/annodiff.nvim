@@ -22,6 +22,8 @@ local M = {}
 ---@field pr? string --pr number or URL (nil: this branch's PR)
 ---@field title? string tree header, when the side names alone say too little
 ---@field scope? string what the review covers, for the inline agent's prompt
+---@field doc? string doc mode: the document, relative to the root
+---@field state_dir? string doc mode outside a git repo: where the review's state and export live
 
 ---@class annodiff.Entry
 ---@field path string        path on the right side, relative to the repo root
