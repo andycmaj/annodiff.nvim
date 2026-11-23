@@ -35,6 +35,7 @@ lazy.nvim:
 | `:Annodiff A...B` | merge base of `A` and `B` | `B` |
 | `:Annodiff --base [branch]` | merge base of `branch` and `HEAD` | worktree |
 | `:Annodiff --pr [N\|URL]` | merge base of the PR's base and head | PR head (worktree when checked out) |
+| `:Annodiff <file.md> [ref]` | a document, not a diff: see [Documents](#documents-doc-mode) | |
 
 `:Annodiff HEAD` is the uncommitted changes, staged and unstaged.
 
@@ -58,6 +59,35 @@ Each review opens in its own tab: `tree | old | new`.
 <img src="docs/images/tree.png" width="228" alt="File tree: status letters, reviewed marks and annotation counts">
 
 *The tree: git status per file, `✓` for reviewed files, `[N]` annotations.*
+
+### Documents (doc mode)
+
+For a plan, spec or README you want to annotate rather than diff:
+
+```vim
+:Annodiff docs/plan.md          " any markdown file path opens doc mode
+:Annodiff --doc notes.txt       " --doc forces it, for any file
+:Annodiff --doc                 " the current buffer's file
+:Annodiff docs/plan.md main     " also mark what changed since main
+```
+
+The tab is `index | document`: the file in one window (your real, editable file,
+no diff mode) and, in place of the file tree, its markdown headings nested by level.
+`<CR>` / `o` on a heading jumps there, `<Tab>` / `<S-Tab>` step to the next / previous
+heading, and the heading of the section the cursor is in is highlighted. Each heading
+shows `[N]` for the annotations in its section. The index follows your edits.
+
+Annotations, asking the agent, send, export and persistence work as in a diff review;
+notes are `( )` lines of the file. With a ref, lines changed since it are marked as in
+the inline layout (added highlighted, removed as ghost rows) and annotate as `(+)` /
+`(-)`; without one, or when the file is empty or missing at the ref, nothing is marked
+until you edit. The file must be in a git repository (state lives in its `.git`).
+
+Why both an explicit flag and auto-detection: a markdown path is never a ref anyone
+means to diff, so `:Annodiff plan.md` can just do the right thing (a readable markdown
+file wins over a ref of the same name). Other files are ambiguous, so they need `--doc`.
+Plan review (`annodiff-planning`) passes `--doc plan.md HEAD` explicitly rather than
+relying on detection.
 
 ### Layouts
 
@@ -257,8 +287,9 @@ With args (`/annodiff:annodiff --pr 12`) it opens straight away.
 
 A `PreToolUse` hook on `ExitPlanMode`. Each session gets a plan repo
 (`$TMPDIR/annodiff-plan-<session>/`) whose HEAD is the previous revision of `plan.md`; the
-review is `:Annodiff HEAD`, blocking until you quit Neovim. The first round shows the whole
-plan, later rounds only what changed. Annotations, and any edits you make to `plan.md`,
+review is [doc mode](#documents-doc-mode), `:Annodiff --doc plan.md HEAD`, blocking until
+you quit Neovim: the plan in one buffer with its headings as the tree. The first round
+marks nothing; later rounds mark what changed since the last revision. Annotations, and any edits you make to `plan.md`,
 go back as the denial reason and Claude revises the plan; quitting without notes gives
 Claude Code's normal plan prompt. Failures (no tmux, no nvim) fail open. Override the
 launcher with an executable `$CLAUDE_PLUGIN_DATA/scripts/launch-plan-review.sh` (same
@@ -272,8 +303,9 @@ contract as revdiff's: annotations on stdout, exit 10 when there are any).
 - Plan rounds are chained by the session id, not by a marker the agent has to copy into
   its next plan, and no agent-supplied path is read.
 - tmux only (revdiff also drives zellij, kitty, wezterm, ghostty, iTerm2 and others).
-- No file-only (`--only`), all-files, `--stdin` patch or `--annotations` preload modes,
-  and no explanation loop: annodiff reviews git diffs, and `\c` answers questions in place.
+- No all-files, `--stdin` patch or `--annotations` preload modes, and no explanation
+  loop: annodiff reviews git diffs and single documents (doc mode stands in for
+  revdiff's file-only `--only`, with a heading index), and `\c` answers questions in place.
   A PR is reviewed from local git with `--pr` (fetched, not checked out), not from
   `gh pr diff` piped in; `gh pr checkout N` first if Claude should edit it live.
 - Codex, opencode and pi plugins are not ported.

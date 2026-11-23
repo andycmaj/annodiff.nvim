@@ -6,6 +6,7 @@ local annotate = require("annodiff.annotate")
 local persist = require("annodiff.persist")
 local send = require("annodiff.send")
 local ask = require("annodiff.ask")
+local doc = require("annodiff.doc")
 
 local api = vim.api
 local M = {}
@@ -49,6 +50,8 @@ local function define_highlights()
     AnnodiffStatusDeleted = "Removed",
     AnnodiffStatusRenamed = "Changed",
     AnnodiffStatusOther = "Special",
+    AnnodiffHeading1 = "Title",
+    AnnodiffHeading = "Directory",
   }
   for group, link in pairs(links) do
     api.nvim_set_hl(0, group, { link = link, default = true })
@@ -96,12 +99,21 @@ local function nav_maps(s, buf, opts)
       vim.keymap.set("n", l, rhs, { buffer = buf, nowait = true, silent = true, desc = "annodiff: " .. desc })
     end)
   end
-  map(km.next_file, function()
-    M.step_file(s, vim.v.count1)
-  end, "next file")
-  map(km.prev_file, function()
-    M.step_file(s, -vim.v.count1)
-  end, "previous file")
+  if s.doc then
+    map(km.next_file, function()
+      M.step_heading(s, vim.v.count1)
+    end, "next heading")
+    map(km.prev_file, function()
+      M.step_heading(s, -vim.v.count1)
+    end, "previous heading")
+  else
+    map(km.next_file, function()
+      M.step_file(s, vim.v.count1)
+    end, "next file")
+    map(km.prev_file, function()
+      M.step_file(s, -vim.v.count1)
+    end, "previous file")
+  end
   if opts.close then
     map(km.close, function()
       M.close(s)
@@ -125,10 +137,12 @@ local function nav_maps(s, buf, opts)
   map(km.ask_file, function()
     ask.ask_file(s)
   end, "ask the agent about the file")
-  map(km.toggle_layout, function()
-    M.set_layout(s)
-  end, "toggle split / inline layout")
-  if not opts.tree then
+  if not s.doc then
+    map(km.toggle_layout, function()
+      M.set_layout(s)
+    end, "toggle split / inline layout")
+  end
+  if not opts.tree and not s.doc then
     map(km.toggle_reviewed, function()
       M.toggle_reviewed(s, s.current)
     end, "toggle reviewed")
@@ -269,9 +283,67 @@ function M.hidden(s)
   return hidden
 end
 
+--- Doc mode: the cursor line in the document, when it is on screen.
+local function doc_cursor(s)
+  if api.nvim_win_is_valid(s.win_new) and s.buf_new and api.nvim_win_get_buf(s.win_new) == s.buf_new then
+    return api.nvim_win_get_cursor(s.win_new)[1]
+  end
+end
+
+--- Doc mode: the document's headings, from the buffer as it is now (edits included).
+---@param s annodiff.Session
+---@return annodiff.Heading[]
+function M.doc_headings(s)
+  if not (s.doc_markdown and s.buf_new and api.nvim_buf_is_valid(s.buf_new)) then
+    return {}
+  end
+  local tick = api.nvim_buf_get_changedtick(s.buf_new)
+  local c = s.doc_cache
+  if not (c and c.buf == s.buf_new and c.tick == tick) then
+    c = { buf = s.buf_new, tick = tick, heads = doc.headings(api.nvim_buf_get_lines(s.buf_new, 0, -1, false)) }
+    s.doc_cache = c
+  end
+  return c.heads
+end
+
+local function apply_tree(s, lines, map, hls)
+  s.map = map
+  local buf = s.buf_tree
+  vim.bo[buf].modifiable = true
+  api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  for _, h in ipairs(hls) do
+    if h.line_hl then
+      api.nvim_buf_set_extmark(buf, ns, h.line, 0, { line_hl_group = h.group, priority = 50 })
+    else
+      local end_col = h.col_end == -1 and #lines[h.line + 1] or h.col_end
+      api.nvim_buf_set_extmark(buf, ns, h.line, h.col_start, { end_col = end_col, hl_group = h.group })
+    end
+  end
+end
+
+---@param s annodiff.Session
+local function render_doc_tree(s)
+  local heads = M.doc_headings(s)
+  local cursor = doc_cursor(s)
+  s.doc_section = cursor and doc.section_of(heads, cursor)
+  local answering = s.threads and s.threads:streaming() or 0
+  local lines, map, hls = doc.render(heads, {
+    header = s.spec.title,
+    current = cursor,
+    annotations = s.store:get(s.spec.doc),
+    summary = answering > 0 and (" · ⟢ %d answering"):format(answering) or nil,
+  })
+  apply_tree(s, lines, map, hls)
+end
+
 ---@param s annodiff.Session
 function M.render_tree(s)
-  local header = s.spec.title or (git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right))
+  if s.doc then
+    return render_doc_tree(s)
+  end
+  local header =s.spec.title or (git.side_label(s.spec.left) .. " → " .. git.side_label(s.spec.right))
   local counts = {}
   for _, file in ipairs(s.store:files()) do
     counts[file] = s.store:count(file)
@@ -299,20 +371,7 @@ function M.render_tree(s)
     hidden = M.hidden(s),
     summary = summary,
   })
-  s.map = map
-  local buf = s.buf_tree
-  vim.bo[buf].modifiable = true
-  api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
-  api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  for _, h in ipairs(hls) do
-    if h.line_hl then
-      api.nvim_buf_set_extmark(buf, ns, h.line, 0, { line_hl_group = h.group, priority = 50 })
-    else
-      local end_col = h.col_end == -1 and #lines[h.line + 1] or h.col_end
-      api.nvim_buf_set_extmark(buf, ns, h.line, h.col_start, { end_col = end_col, hl_group = h.group })
-    end
-  end
+  apply_tree(s, lines, map, hls)
 end
 
 local function tree_line_of(s, index)
@@ -321,6 +380,81 @@ local function tree_line_of(s, index)
       return i
     end
   end
+end
+
+--- Doc mode: the tree row of the heading whose section holds the cursor.
+local function doc_tree_row(s)
+  local heads = M.doc_headings(s)
+  local cur = s.doc_section and heads[s.doc_section]
+  if not cur then
+    return
+  end
+  for i, item in ipairs(s.map) do
+    if item.kind == "heading" and item.line == cur.line then
+      return i
+    end
+  end
+end
+
+--- Doc mode: put the document's cursor on a line (top of the window), keep the
+--- tree's highlight and cursor on its section.
+---@param s annodiff.Session
+---@param line integer
+---@param focus? boolean move focus to the document
+function M.doc_goto(s, line, focus)
+  if not api.nvim_win_is_valid(s.win_new) then
+    return
+  end
+  line = math.max(1, math.min(line, api.nvim_buf_line_count(api.nvim_win_get_buf(s.win_new))))
+  api.nvim_win_set_cursor(s.win_new, { line, 0 })
+  api.nvim_win_call(s.win_new, function()
+    vim.cmd("normal! zt")
+  end)
+  M.render_tree(s)
+  local row = doc_tree_row(s)
+  if row then
+    api.nvim_win_set_cursor(s.win_tree, { row, 0 })
+  end
+  if focus then
+    api.nvim_set_current_win(s.win_new)
+  end
+end
+
+--- Doc mode: next / previous heading (<Tab> / <S-Tab>), from the document's cursor.
+---@param s annodiff.Session
+---@param delta integer
+function M.step_heading(s, delta)
+  local heads = M.doc_headings(s)
+  local cur = doc_cursor(s) or 1
+  local target
+  if delta > 0 then
+    local n = 0
+    for _, h in ipairs(heads) do
+      if h.line > cur then
+        n = n + 1
+        target = h.line
+        if n == delta then
+          break
+        end
+      end
+    end
+  else
+    local n = 0
+    for i = #heads, 1, -1 do
+      if heads[i].line < cur then
+        n = n + 1
+        target = heads[i].line
+        if n == -delta then
+          break
+        end
+      end
+    end
+  end
+  if not target then
+    notify(delta > 0 and "last heading" or "first heading")
+    return
+  end
+  M.doc_goto(s, target, false)
 end
 
 local function tree_select(s)
@@ -335,6 +469,8 @@ local function tree_select(s)
     api.nvim_win_set_cursor(s.win_tree, { math.min(row, #s.map), 0 })
   elseif item.kind == "file" then
     M.open_file(s, item.index, { focus = "new" })
+  elseif item.kind == "heading" then
+    M.doc_goto(s, item.line, true)
   end
 end
 
@@ -368,25 +504,32 @@ local function setup_tree(s)
       vim.keymap.set("n", l, fn, { buffer = buf, nowait = true, silent = true, desc = "annodiff: " .. desc })
     end)
   end
-  tmap(km.tree_toggle_reviewed, function()
-    local item = s.map[api.nvim_win_get_cursor(s.win_tree)[1]]
-    if item and item.kind == "file" then
-      M.toggle_reviewed(s, item.index)
-    end
-  end, "toggle reviewed")
   tmap(km.tree_send, function()
     send.send(s)
   end, "send annotations")
-  tmap(km.filter_annotated, function()
-    M.set_filter(s, "annotated")
-  end, "show only annotated files")
-  tmap(km.filter_unreviewed, function()
-    M.set_filter(s, "unreviewed")
-  end, "show only unreviewed files")
+  if not s.doc then
+    tmap(km.tree_toggle_reviewed, function()
+      local item = s.map[api.nvim_win_get_cursor(s.win_tree)[1]]
+      if item and item.kind == "file" then
+        M.toggle_reviewed(s, item.index)
+      end
+    end, "toggle reviewed")
+    tmap(km.filter_annotated, function()
+      M.set_filter(s, "annotated")
+    end, "show only annotated files")
+    tmap(km.filter_unreviewed, function()
+      M.set_filter(s, "unreviewed")
+    end, "show only unreviewed files")
+  end
   each_lhs(km.select, function(l)
     vim.keymap.set("n", l, function()
       tree_select(s)
-    end, { buffer = buf, nowait = true, silent = true, desc = "annodiff: open file / toggle directory" })
+    end, {
+      buffer = buf,
+      nowait = true,
+      silent = true,
+      desc = s.doc and "annodiff: jump to heading" or "annodiff: open file / toggle directory",
+    })
   end)
   each_lhs(km.refresh, function(l)
     vim.keymap.set("n", l, function()
@@ -484,6 +627,9 @@ local function open_real(s, win, real_path)
       vim.schedule(function()
         if s.real_buf == buf and valid(s) then
           annotate.render(s)
+          if s.doc then
+            M.render_tree(s) -- headings may have changed
+          end
         end
       end)
     end,
@@ -508,7 +654,13 @@ function M.open_file(s, index, opts)
   local old_path = entry.old_path or entry.path
   local inline = s.layout == "inline"
 
-  local old_lines, old_bin = git.show(root, spec.left, old_path)
+  local old_lines, old_bin
+  if s.doc then
+    -- the base revision, or the document as it was when the review opened
+    old_lines, old_bin = s.doc_base, false
+  else
+    old_lines, old_bin = git.show(root, spec.left, old_path)
+  end
   local real_path = vim.fs.joinpath(root, entry.path)
   local use_real = spec.right.kind == "worktree" and entry.status ~= "D" and vim.fn.filereadable(real_path) == 1
   local new_lines, new_bin
@@ -528,7 +680,7 @@ function M.open_file(s, index, opts)
   local stale = s.hidden_bufs
   s.hidden_bufs = {}
 
-  local left_name = git.side_label(spec.left) .. "/" .. old_path
+  local left_name = (spec.left and git.side_label(spec.left) or "base") .. "/" .. old_path
   local right_name = git.side_label(spec.right) .. "/" .. entry.path
   s.binary = binary
   s.inline_side = "new"
@@ -609,6 +761,10 @@ end
 ---@param s annodiff.Session
 ---@param layout? "split"|"inline" nil toggles
 function M.set_layout(s, layout)
+  if s.doc then
+    notify("a document review has one layout")
+    return
+  end
   layout = layout or (s.layout == "inline" and "split" or "inline")
   if layout ~= "split" and layout ~= "inline" then
     notify("layout is split or inline", vim.log.levels.WARN)
@@ -863,6 +1019,15 @@ end
 
 ---@param s annodiff.Session
 function M.refresh(s)
+  if s.doc then
+    local cursor = doc_cursor(s)
+    M.open_file(s, 1, { focus = focused_side(s), hunk = false })
+    if cursor then
+      pcall(api.nvim_win_set_cursor, s.win_new, { cursor, 0 })
+    end
+    M.render_tree(s)
+    return
+  end
   local entries, err = git.changed_files(s.root, s.spec)
   if not entries then
     notify(err, vim.log.levels.ERROR)
@@ -945,6 +1110,61 @@ function M.refresh_current()
   M.refresh(s)
 end
 
+local start
+
+--- Doc mode: one document in one window (the real file), its headings as the tree.
+--- With a ref, changes since that revision are marked inline; without one (or when
+--- the file is empty or missing there) nothing is marked until you edit it.
+---@param d annodiff.DocArgs
+---@return annodiff.Session?
+local function open_doc(d)
+  local file = vim.fn.fnamemodify(vim.fn.expand(d.path), ":p")
+  local root, rerr = git.root(vim.fs.dirname(file))
+  if not root then
+    notify("a document review needs the file in a git repository: " .. tostring(rerr), vim.log.levels.ERROR)
+    return
+  end
+  local rel = doc.relpath(root, file)
+  if not rel then
+    notify("not inside " .. root .. ": " .. file, vim.log.levels.ERROR)
+    return
+  end
+  local snapshot, bin = git.show(root, { kind = "worktree" }, rel)
+  if not snapshot or bin then
+    notify((bin and "binary file: " or "cannot read ") .. rel, vim.log.levels.ERROR)
+    return
+  end
+  local base
+  if d.ref then
+    if not git.run(root, { "rev-parse", "--verify", "--quiet", "--end-of-options", d.ref .. "^{commit}" }) then
+      notify("unknown revision: " .. d.ref, vim.log.levels.ERROR)
+      return
+    end
+    local lines, base_bin = git.show(root, { kind = "rev", rev = d.ref }, rel)
+    if lines and #lines > 0 and not base_bin then
+      base = lines
+    end
+  end
+  local spec = {
+    doc = rel,
+    left = base and { kind = "rev", rev = d.ref } or nil,
+    right = { kind = "worktree" },
+    diff_args = {},
+    label = "doc " .. rel,
+    title = rel .. (base and (" · changes since " .. d.ref) or ""),
+    scope = ("the document %s in the working tree%s"):format(
+      rel,
+      base and (", with its changes since " .. d.ref .. " marked") or ""
+    ),
+  }
+  local markdown = doc.is_markdown(rel) or vim.filetype.match({ filename = rel }) == "markdown"
+  return start(root, spec, { { path = rel, status = base and "M" or "A" } }, "inline", {
+    doc = true,
+    doc_markdown = markdown,
+    doc_base = base or snapshot,
+  })
+end
+
 ---@param args string[]
 ---@return annodiff.Session?
 function M.open(args)
@@ -957,6 +1177,15 @@ function M.open(args)
     end
     return true
   end, args or {})
+  local current_file = vim.bo.buftype == "" and api.nvim_buf_get_name(0) or nil
+  local d, derr = doc.parse_args(args, current_file)
+  if derr then
+    notify(derr, vim.log.levels.ERROR)
+    return
+  end
+  if d then
+    return open_doc(d)
+  end
   local root, rerr = git.root()
   if not root then
     notify(rerr, vim.log.levels.ERROR)
@@ -979,7 +1208,17 @@ function M.open(args)
     notify("no changes (" .. spec.label .. ")")
     return
   end
+  return start(root, spec, entries, (opts_layout or config.options.layout) == "inline" and "inline" or "split")
+end
 
+--- Open the review tab: tree, diff window(s), autocmds, first file.
+---@param root string
+---@param spec annodiff.Spec
+---@param entries annodiff.Entry[]
+---@param layout "split"|"inline"
+---@param extra? table session fields to set before the windows are built (doc mode)
+---@return annodiff.Session
+start = function(root, spec, entries, layout, extra)
   next_id = next_id + 1
   vim.cmd("tabnew")
   local placeholder = api.nvim_get_current_buf()
@@ -994,7 +1233,10 @@ function M.open(args)
     win_new = api.nvim_get_current_win(),
   }
   s.tree_root, s.files = tree.build(entries)
-  s.layout = (opts_layout or config.options.layout) == "inline" and "inline" or "split"
+  s.layout = layout
+  for k, v in pairs(extra or {}) do
+    s[k] = v
+  end
   annotate.new_store(s)
   ask.init(s)
   s.on_close = ask.shutdown
@@ -1029,6 +1271,21 @@ function M.open(args)
     end,
   })
   api.nvim_create_autocmd("ColorScheme", { group = s.augroup, callback = define_highlights })
+  if s.doc then
+    -- keep the index's highlight on the section the cursor is in
+    api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+      group = s.augroup,
+      callback = function()
+        if s.closing or api.nvim_get_current_win() ~= s.win_new then
+          return
+        end
+        local cursor = doc_cursor(s)
+        if cursor and doc.section_of(M.doc_headings(s), cursor) ~= s.doc_section then
+          M.render_tree(s)
+        end
+      end,
+    })
+  end
 
   sessions[s.tab] = s
   M.open_file(s, 1, { focus = "new" })

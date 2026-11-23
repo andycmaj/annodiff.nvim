@@ -2,8 +2,9 @@
 # Open a plan review in Neovim (annodiff.nvim) and block until Neovim exits.
 # usage: launch-plan-review.sh <plan-repo>
 #   <plan-repo>: a git repo whose HEAD holds the previous revision of plan.md (empty on the
-#   first round) and whose worktree holds the new one. The review is `:Annodiff HEAD`, so
-#   later rounds show what changed since the last revision, and plan.md is editable.
+#   first round) and whose worktree holds the new one. The review is doc mode,
+#   `:Annodiff --doc plan.md HEAD`: plan.md in one editable buffer with its headings as the
+#   tree, and from the second round on the changes since the last revision marked inline.
 # Prints the annotations (revdiff ## format) to stdout. Exit 10 = annotations captured,
 # 0 = none, anything else = the review did not happen (the hook fails open).
 # Same contract as revdiff-planning's launch-plan-review.sh, so it can be overridden the
@@ -31,7 +32,7 @@ if [ -z "$rtp" ]; then
     done
   fi
 fi
-vimcmd="Annodiff HEAD"
+vimcmd="Annodiff --doc plan.md HEAD"
 [ -n "$rtp" ] && vimcmd="set rtp^=$rtp | runtime plugin/annodiff.lua | $vimcmd"
 # Plan notes go back through this hook, not to the user's send command.
 cmd="env -u ANNODIFF_SEND_COMMAND -u REVDIFF_POST_FLUSH_COMMAND ANNODIFF_SEND_ON_CLOSE=0 nvim -c $(printf '%q' "$vimcmd")"

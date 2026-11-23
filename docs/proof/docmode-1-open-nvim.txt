@@ -1,0 +1,39 @@
+ [No Name]  2 README.md                                                                                                                              X
+README.md                          │# annodiff.nvim
+18 headings                        │
+annodiff.nvim                      │Review git diffs inside Neovim: a changed-file tree beside native diff windows
+  Install                          │(or one inline window), with the worktree side as your real, editable file
+  Use                              │(LSP, treesitter, gitsigns all work). Neovim port of [revdiff](https://github.com/andycmaj/revdiff).
+    Documents (doc mode)           │Annotate lines, ranges and files; export in revdiff's `##` format so the
+    Layouts                        │revdiff agent skills read it unchanged. Annotations and reviewed marks persist
+    Keys                           │per review and follow the code when it moves. Send them to an agent, or ask
+  Annotations                      │a read-only agent about a line and read the answer in place (see
+    Persistence                    │[docs/plan.md](docs/plan.md)).
+    Sending to an agent            │
+    Asking an agent inline         │![Split layout: changed-file tree, old and new sides in diff mode, annotations under the lines they belong to](doc
+    Export                         │s/images/split.png)
+  Claude Code                      │
+    `/annodiff` (review skill)     │*Split layout: the changed-file tree beside old and new in diff mode, with
+    Plan review (`annodiff-planning│annotations drawn under their lines.*
+    Differences from revdiff's plug│
+  Config                           │Neovim 0.10+, no dependencies.
+  Tests                            │
+  License                          │## Install
+~                                  │
+~                                  │lazy.nvim:
+~                                  │
+~                                  │```lua
+~                                  │{ "andycmaj/annodiff.nvim", cmd = { "Annodiff" }, opts = {} }
+~                                  │```
+~                                  │
+~                                  │## Use
+~                                  │
+~                                  │| Command | Left | Right |
+~                                  │|---|---|---|
+~                                  │| `:Annodiff` | index | worktree |
+~                                  │| `:Annodiff <ref>` | `<ref>` | worktree |
+~                                  │| `:Annodiff --staged [ref]` | `<ref>` (default `HEAD`) | index |
+~                                  │| `:Annodiff A..B` | `A` | `B` |
+~                                  │| `:Annodiff A...B` | merge base of `A` and `B` | `B` |
+<ff://1/tree [-] 1,1            All README.md                                                                                       1,1            Top
+

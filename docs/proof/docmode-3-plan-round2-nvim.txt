@@ -1,0 +1,21 @@
+    󰈔 [No Name]     ▕     󰍔 plan.md                                                                                                    ▏ 1 ▕▏ 2 ▕ 
+plan.md · changes since HEAD       │ 󰍔 plan.md 󰉫 Plan 󰉬 Context
+3 headings · 1 annotation          │   4   # Plan
+Plan                               │   3
+  Context [1]                      │+  2 ▎ ## Context
+  Steps                            │+  1 ▎
+                                   │▍  5 ▎ why we do it  Not Committed Yet
+                                   │         ▍ say which tests
+                                   │+  1 ▎
+                                   │   2   ## Steps
+                                   │   3
+                                   │   4   1. read code
+                                   │+  5 ▎ 2. write tests
+                                   │       2. write code
+                                   │+  6 ▎ 3. write code
+                                   │
+                                   │
+--- launch-plan-review.sh stdout after :qa ---
+## plan.md:5 (+)
+say which tests
+exit=10

@@ -6,8 +6,9 @@ the user's annotations as plan feedback. Port of revdiff-planning's hook.
 
 Each Claude session gets one plan repo, $TMPDIR/annodiff-plan-<session>/, a git
 repo holding plan.md. Its HEAD is the previous revision (an empty file on the
-first round) and its worktree the new one, and the review is `:Annodiff HEAD`:
-the first round shows the whole plan as added, later rounds show what changed.
+first round) and its worktree the new one, and the review is annodiff's doc mode,
+`:Annodiff --doc plan.md HEAD`: the plan in one buffer with its headings as the
+tree; the first round marks nothing, later rounds mark what changed inline.
 revdiff chains rounds with a marker the agent must copy into its next plan;
 here the session id from the hook event keys the chain, so nothing depends on
 the agent and no agent-supplied path is ever read.
@@ -160,7 +161,7 @@ def main() -> None:
     try:
         commit_revision(repo, plan)
     except (OSError, subprocess.CalledProcessError):
-        pass  # next round then shows the whole plan again; the feedback still goes back
+        pass  # next round then marks no changes; the feedback still goes back
 
     parts = ["The user reviewed your plan in Neovim (annodiff) and left feedback."]
     if annotations:
@@ -174,7 +175,7 @@ def main() -> None:
         parts.append("The user also edited the plan directly. Keep these edits:\n\n```diff\n" + edits + "```")
     parts.append(
         "Revise the plan to address every point, then call ExitPlanMode again. "
-        "The next review shows only what changed since this revision."
+        "The next review marks what changed since this revision."
     )
     make_response("deny", "\n\n".join(parts))
 

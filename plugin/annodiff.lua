@@ -12,10 +12,17 @@ vim.api.nvim_create_user_command("Annodiff", function(cmd)
   require("annodiff").open(cmd.fargs)
 end, {
   nargs = "*",
-  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B | --base [branch] | --pr [N|URL]]",
+  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B | --base [branch] | --pr [N|URL]], or a document: :Annodiff <file.md> | --doc [file] [ref]",
   complete = function(arglead)
-    local items = { "--staged", "--inline", "--split", "--base", "--pr" }
+    local items = { "--staged", "--inline", "--split", "--base", "--pr", "--doc" }
     vim.list_extend(items, require("annodiff.git").refs())
+    -- documents: markdown files and the directories leading to them
+    local is_markdown = require("annodiff.doc").is_markdown
+    for _, f in ipairs(vim.fn.getcompletion(arglead, "file")) do
+      if f:sub(-1) == "/" or is_markdown(f) then
+        table.insert(items, f)
+      end
+    end
     return vim.tbl_filter(function(item)
       return vim.startswith(item, arglead)
     end, items)

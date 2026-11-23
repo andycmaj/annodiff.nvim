@@ -1,0 +1,39 @@
+ [No Name]  2 README.md                                                                                                                              X
+README.md                          │  ### Keys
+18 headings · 1 annotation         │▍
+annodiff.nvim                      │    ▍ needs an example
+  Install                          │  | Key | Where | Action |
+  Use                              │  |---|---|---|
+    Documents (doc mode)           │  | `<Tab>` / `<S-Tab>` | everywhere | next / previous file |
+    Layouts                        │  | `]c` / `[c` | diff windows | next / previous hunk; past the last / first hunk moves to the next / previous fil
+    Keys [1]                       │  e |
+  Annotations                      │  | `<CR>` / `o` | tree | open file, or collapse / expand directory |
+    Persistence                    │  | `R` | tree | refresh the file list |
+    Sending to an agent            │  | `q` | tree, read-only buffers | close the review (not mapped on your real file buffers) |
+    Asking an agent inline         │  | `<localleader>a` | diff windows (normal / visual) | annotate the line or range; on an annotated line, edit it
+    Export                         │  (save empty to delete) |
+  Claude Code                      │  | `<localleader>A` | everywhere | file-level annotation |
+    `/annodiff` (review skill)     │  | `<localleader>d` | diff windows | delete the annotation under the cursor |
+    Plan review (`annodiff-planning│  | `<localleader>l` | everywhere | pick an annotation (`vim.ui.select`) and jump to it |
+    Differences from revdiff's plug│  | `<localleader>n` / `<localleader>N` | everywhere | next / previous annotation, across files |
+  Config                           │  | `<Space>` | tree | mark the file under the cursor reviewed (✓) |
+  Tests                            │  | `<localleader>r` | diff windows | mark the open file reviewed |
+  License                          │  | `f` / `F` | tree | show only annotated / only unreviewed files (again to clear); `<Tab>` skips hidden files |
+~                                  │  | `<localleader>s` / `O` (tree) | everywhere | send the annotations to your agent (see below) |
+~                                  │  | `<localleader>c` | diff windows (normal / visual) | ask the agent about the line or range; on a line with a th
+~                                  │  read, open it |
+~                                  │  | `<localleader>C` | everywhere | ask about the whole file, or open its thread |
+~                                  │  | `<localleader>i` | everywhere | toggle split / inline layout |
+~                                  │
+~                                  │  In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
+~                                  │  in normal mode cancels.
+~                                  │
+~                                  │  ## Annotations
+~                                  │
+~                                  │  Records follow revdiff: `+` added line (new-side number), `-` removed line
+~                                  │  (old-side number), ` ` context line (new-side number, from either window),
+~                                  │  file-level, and `start-end` ranges. A comment containing the word "hunk" on a
+~                                  │  `+` / `-` line widens to the end of that changed block, as in revdiff.
+~                                  │
+<ff://1/tree [-] 8,1            All README.md                                                                                       129,0-1        37%
+

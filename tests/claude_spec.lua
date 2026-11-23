@@ -394,7 +394,7 @@ if [ -n "$NOTE" ]; then mkdir -p .git/annodiff; printf '## plan.md:1 (+)\nnote\n
     eq(10, res.code, res.stderr)
     eq("## plan.md:1 (+)\nnote\n", res.stdout)
     local args = read(repo .. "/.git/nvim-args")
-    truthy(args:find("set rtp^=" .. root .. " | runtime plugin/annodiff.lua | Annodiff HEAD", 1, true), args)
+    truthy(args:find("set rtp^=" .. root .. " | runtime plugin/annodiff.lua | Annodiff --doc plan.md HEAD", 1, true), args)
     eq(nil, read(repo .. "/.git/nvim-env"):find("ANNODIFF_SEND_COMMAND", 1, true), "plan notes never go to the send command")
   end)
 

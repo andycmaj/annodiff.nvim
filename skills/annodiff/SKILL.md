@@ -1,7 +1,7 @@
 ---
 name: annodiff
 description: Review this branch's diff in Neovim (annodiff.nvim) beside this Claude session; annotations sent with \s (and unsent ones on close) arrive back here as a message. Also reads the latest annodiff annotations for this repo, and answers questions about annodiff's keys and config. Use when the user runs /annodiff, or says "annodiff", "review in annodiff", "review in nvim", "use my latest annodiff annotations", "what did I annotate in annodiff".
-argument-hint: 'optional: what to review, e.g. HEAD, --base [branch], --pr [N|URL], main...HEAD, --staged, --inline (none: asks)'
+argument-hint: 'optional: what to review, e.g. HEAD, --base [branch], --pr [N|URL], main...HEAD, --staged, --inline, docs/plan.md (none: asks)'
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/open.sh:*), Bash(${CLAUDE_SKILL_DIR}/scripts/read-latest.sh:*)
 ---
 
@@ -23,7 +23,7 @@ With arguments, run them as given; nothing is asked:
 ${CLAUDE_SKILL_DIR}/scripts/open.sh <annodiff args>
 ```
 
-Annodiff args: `HEAD` (uncommitted: staged + unstaged), `--base [branch]` (everything since the branch forked: merge base vs worktree; default branch when omitted; for a stacked branch, the branch below), `--pr [N|URL]` (a GitHub PR; none means this branch's PR), `<ref>` (ref vs worktree), `A..B`, `A...B`, `--staged [ref]`, plus `--inline` / `--split`. A lone PR number, `#N` or PR URL means `--pr` with it.
+Annodiff args: `HEAD` (uncommitted: staged + unstaged), `--base [branch]` (everything since the branch forked: merge base vs worktree; default branch when omitted; for a stacked branch, the branch below), `--pr [N|URL]` (a GitHub PR; none means this branch's PR), `<ref>` (ref vs worktree), `A..B`, `A...B`, `--staged [ref]`, plus `--inline` / `--split`. A lone PR number, `#N` or PR URL means `--pr` with it. A document instead of a diff (a plan, a spec, a README): `<file.md>` or `--doc <file> [ref]` (path relative to the repo root) opens doc mode, the file in one buffer with its headings as the tree; with a ref, changes since it are marked. Notes on it arrive in the same format, `( )` for its lines.
 
 With no arguments, run `open.sh` with none. Nothing opens; it prints `needs_ask: true` and one `option: <label> | <args> | <description>` line per kind of diff that applies here, the recommended one first. Ask with AskUserQuestion, one question ("Which diff should annodiff review?"), the options in the order printed: label as label, description as description, `(Recommended)` after the first label. Then:
 
