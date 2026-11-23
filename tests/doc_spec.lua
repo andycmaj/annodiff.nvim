@@ -405,6 +405,21 @@ describe(":Annodiff --doc on a file outside any git repo (an agent's message)", 
     eq({ "turn.md" }, vim.fn.readdir(dir), "nothing written beside the document")
   end)
 
+  it("read-latest.sh --doc finds that export (the notes-never-arrived fallback)", function()
+    local script = api.nvim_get_runtime_file("skills/annodiff/scripts/read-latest.sh", false)[1]
+    local path = annotate.export(s)
+    -- through a symlink too: annodiff keys the state dir on the real path
+    local link = vim.fn.tempname()
+    vim.uv.fs_symlink(dir, link)
+    for _, arg in ipairs({ dir .. "/turn.md", link .. "/turn.md" }) do
+      local res = vim.system({ script, "--doc", arg }, { cwd = other, text = true }):wait()
+      eq(0, res.code, res.stderr)
+      eq("source: " .. path .. "\n\n## turn.md:3 ( )\nyes, stable\n", res.stdout)
+    end
+    -- without --doc, from a dir that is not a repo, there is nothing
+    eq("", vim.system({ script }, { cwd = other, text = true }):wait().stdout)
+  end)
+
   it("closing writes no revdiff history entry, and reopening restores the note", function()
     quiet(function()
       require("annodiff.view").close(s)

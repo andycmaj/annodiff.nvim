@@ -270,6 +270,79 @@ printf '%s\n' "$STUB_GH_PR"
   end)
 end)
 
+describe("deliver.sh", function()
+  local script = root .. "/skills/annodiff/scripts/deliver.sh"
+  local real_mktemp = vim.fn.exepath("mktemp")
+  -- stub tmux: logs argv, and load-buffer's stdin (the message)
+  local bin = vim.fn.tempname()
+  local log = bin .. "/tmux.log"
+  write(
+    bin .. "/tmux",
+    ([[#!/bin/sh
+printf '%%s\n' "$*" >> %s
+[ "$1" = load-buffer ] && cat >> %s
+exit 0
+]]):format(vim.fn.shellescape(log), vim.fn.shellescape(log)),
+    "755"
+  )
+  -- GNU coreutils mktemp (Linux): a template needs at least three X's, so the macOS-only
+  -- `mktemp -t prefix` fails there. Mimic that on every platform.
+  write(
+    bin .. "/mktemp",
+    ([[#!/bin/sh
+for a in "$@"; do last="$a"; done
+case "$last" in
+  *XXX*) exec %s "$@" ;;
+  *) echo "mktemp: too few X's in template '$last'" >&2; exit 1 ;;
+esac
+]]):format(vim.fn.shellescape(real_mktemp)),
+    "755"
+  )
+  local env = { PATH = bin .. ":" .. vim.env.PATH }
+  local note = "## x.md:1 ( )\ntest\n"
+
+  it("pastes the annotations into the pane and submits them, with GNU mktemp too", function()
+    os.remove(log)
+    local res = run({ script, "%99" }, { env = env, stdin = note })
+    eq(0, res.code, res.stderr)
+    eq(
+      table.concat({
+        "load-buffer -b annodiff -",
+        "annodiff annotations (from /annodiff nvim):",
+        "",
+        "## x.md:1 ( )",
+        "test",
+        "paste-buffer -b annodiff -p -d -t %99",
+        "send-keys -t %99 Enter",
+        "",
+      }, "\n"),
+      read(log)
+    )
+  end)
+
+  it("sends nothing for an empty snapshot", function()
+    os.remove(log)
+    local res = run({ script, "%99" }, { env = env, stdin = "" })
+    eq(0, res.code, res.stderr)
+    eq(nil, read(log))
+  end)
+
+  it("fails (so annodiff says send failed, not sent) when it cannot make its temp file", function()
+    os.remove(log)
+    write(bin .. "/fail/mktemp", "#!/bin/sh\necho 'mktemp: nope' >&2\nexit 1\n", "755")
+    local res = run({ script, "%99" }, { env = { PATH = bin .. "/fail:" .. env.PATH }, stdin = note })
+    eq(1, res.code)
+    truthy(res.stderr:find("deliver: mktemp failed", 1, true), res.stderr)
+    eq(nil, read(log), "tmux never called")
+  end)
+
+  it("fails when tmux cannot paste", function()
+    write(bin .. "/fail2/tmux", "#!/bin/sh\necho \"can't find pane: %99\" >&2\nexit 1\n", "755")
+    local res = run({ script, "%99" }, { env = { PATH = bin .. "/fail2:" .. env.PATH }, stdin = note })
+    eq(1, res.code)
+  end)
+end)
+
 describe("read-latest.sh", function()
   local script = root .. "/skills/annodiff/scripts/read-latest.sh"
 

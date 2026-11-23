@@ -1,0 +1,28 @@
+# Issue #1 proof: deliver.sh under GNU coreutils mktemp (Linux behaviour)
+# mktemp on PATH = /opt/homebrew/bin/gmktemp (mktemp (GNU coreutils) 9.6); tmux = logging stub
+
+$ printf "## x.md:1 ( )\ntest\n" | deliver.sh %999   # before (main 64c6f43)
+mktemp: too few X's in template ‘annodiff-send’
+deliver.sh: line 8: : No such file or directory
+exit=0
+  (tmux never called)
+
+$ printf "## x.md:1 ( )\ntest\n" | deliver.sh %999   # after
+exit=0
+  tmux log: tmux load-buffer -b annodiff -
+  tmux log: annodiff annotations (from /annodiff nvim):
+  tmux log: 
+  tmux log: ## x.md:1 ( )
+  tmux log: test
+  tmux log: tmux paste-buffer -b annodiff -p -d -t %999
+  tmux log: tmux send-keys -t %999 Enter
+
+# new tests against the old scripts (red):
+  FAIL deliver.sh > pastes the annotations into the pane and submits them, with GNU mktemp too
+  FAIL deliver.sh > fails (so annodiff says send failed, not sent) when it cannot make its temp file
+  FAIL deliver.sh > fails when tmux cannot paste
+  FAIL :Annodiff --doc on a file outside any git repo (an agent's message) > read-latest.sh --doc finds that export (the notes-never-arrived fallback)
+55 passed, 4 failed
+
+# make test with the fix:
+201 passed, 0 failed
