@@ -18,19 +18,73 @@ Neovim 0.10+, no dependencies.
 
 ## Install
 
-lazy.nvim:
+This section installs the Neovim plugin. The Claude Code skill and plan-review hook are
+a separate install, see [Claude Code](#claude-code).
+
+### lazy.nvim / LazyVim
+
+Installs straight from git: no build step, no dependencies. In LazyVim, save this as
+`~/.config/nvim/lua/plugins/annodiff.lua`:
 
 ```lua
 return {
-  dir = "andycmaj/annodiff.nvim",
-  name = "annodiff.nvim",
-  cmd = { "Annodiff", "AnnodiffClose", "AnnodiffRefresh", "AnnodiffExport", "AnnodiffSend", "AnnodiffClear" },
+  "andycmaj/annodiff.nvim",
+  -- load on first use of a command or key
+  cmd = {
+    "Annodiff", "AnnodiffClose", "AnnodiffRefresh", "AnnodiffExport",
+    "AnnodiffSend", "AnnodiffClear", "AnnodiffLayout",
+  },
+  keys = {
+    -- <leader>gv is free in LazyVim (<leader>gB, gP, gd are taken)
+    { "<leader>gvv", "<cmd>Annodiff HEAD<cr>", desc = "Annodiff: uncommitted changes" },
+    { "<leader>gvb", "<cmd>Annodiff --base<cr>", desc = "Annodiff: since base branch" },
+    { "<leader>gvp", "<cmd>Annodiff --pr<cr>", desc = "Annodiff: this branch's PR" },
+    { "<leader>gvd", "<cmd>Annodiff --doc<cr>", desc = "Annodiff: annotate this file" },
+  },
   opts = {
+    -- every option is optional; see Config below
     layout = "inline",
-    -- agent = { model = "haiku" },  -- optional: cheaper/faster inline answers
+    -- agent = { model = "haiku" }, -- cheaper, faster inline answers
   },
 }
 ```
+
+`opts` goes to `require("annodiff").setup()`; `opts = {}` (or leaving `opts` out)
+gives the defaults. Review keys (`\a`, `\s`, `]c`, ...) are buffer-local to the review
+tab, so they need no lazy-loading entries; `keys` above are only global shortcuts to
+open one. A plain `{ "andycmaj/annodiff.nvim", opts = {} }` works too: it loads at
+startup, which costs only defining the commands.
+
+`:help annodiff` has the reference; lazy.nvim generates the help tags on install and
+update.
+
+#### Pinning
+
+`lazy-lock.json` already records the installed commit. To hold a version in the spec
+itself, add one of:
+
+```lua
+branch = "main",        -- track a branch
+tag = "v0.2.0",         -- a release tag
+commit = "123bab6",     -- an exact commit
+version = "*",          -- latest semver tag (LazyVim defaults to version = false)
+```
+
+To run a local checkout instead (hacking on annodiff), replace the repo name with
+`dir = "~/path/to/annodiff.nvim"`; `dir` is a filesystem path, not a GitHub name.
+
+### Other plugin managers
+
+Any manager that clones the repo onto `runtimepath` works (`plugin/annodiff.lua`
+registers the commands). With no manager:
+
+```sh
+git clone https://github.com/andycmaj/annodiff.nvim \
+  ~/.local/share/nvim/site/pack/annodiff/start/annodiff.nvim
+nvim --headless -c 'helptags ALL' -c q
+```
+
+Then, optionally, `require("annodiff").setup({ ... })` in your config.
 
 ## Use
 

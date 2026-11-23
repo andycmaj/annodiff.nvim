@@ -1,0 +1,257 @@
+*annodiff.txt*  Review git diffs and documents in Neovim, annotate them
+
+==============================================================================
+CONTENTS                                                   *annodiff-contents*
+
+  1. Introduction ................................ |annodiff-intro|
+  2. Install ..................................... |annodiff-install|
+  3. Commands .................................... |annodiff-commands|
+  4. Documents (doc mode) ........................ |annodiff-doc-mode|
+  5. Layouts ..................................... |annodiff-layouts|
+  6. Keys ........................................ |annodiff-keys|
+  7. Annotations ................................. |annodiff-annotations|
+  8. Sending to an agent ......................... |annodiff-send|
+  9. Asking an agent inline ...................... |annodiff-ask|
+ 10. Configuration ............................... |annodiff-config|
+ 11. Lua API ..................................... |annodiff-api|
+
+==============================================================================
+1. INTRODUCTION                                               *annodiff-intro*
+
+annodiff.nvim shows a changed-file tree beside native diff windows (or one
+inline window). The worktree side is your real, editable file, so LSP,
+treesitter and gitsigns all work. Annotate lines, ranges and files, export
+them in revdiff's `##` format, send them to an agent, or ask a read-only
+agent about a line and read the answer in place.
+
+Requirements: Neovim 0.10+ and git. No plugin dependencies. Optional: `gh`
+for |annodiff---pr|, the `claude` CLI for |annodiff-ask|.
+
+==============================================================================
+2. INSTALL                                                  *annodiff-install*
+
+lazy.nvim (and LazyVim, as a file under `lua/plugins/`): >lua
+
+  {
+    "andycmaj/annodiff.nvim",
+    cmd = { "Annodiff", "AnnodiffClose", "AnnodiffRefresh", "AnnodiffExport",
+            "AnnodiffSend", "AnnodiffClear", "AnnodiffLayout" },
+    keys = {
+      { "<leader>gvv", "<cmd>Annodiff HEAD<cr>", desc = "Annodiff HEAD" },
+      { "<leader>gvb", "<cmd>Annodiff --base<cr>", desc = "Annodiff base" },
+      { "<leader>gvp", "<cmd>Annodiff --pr<cr>", desc = "Annodiff this PR" },
+    },
+    opts = {},
+  }
+<
+No build step. `opts` is passed to |annodiff.setup()|; calling setup is
+optional, the defaults apply without it. lazy.nvim generates the help tags
+for this file on install and update.
+
+Pin a version with lazy.nvim's `branch`, `tag`, `commit` or `version` keys,
+or rely on `lazy-lock.json`, which records the installed commit.
+
+Without a plugin manager, put the repository on 'runtimepath' (for example
+under `pack/*/start/`), then run `:helptags ALL` once.
+
+==============================================================================
+3. COMMANDS                                                *annodiff-commands*
+
+                                                                   *:Annodiff*
+:Annodiff [--inline|--split] [args]
+  Open a review in a new tab: `tree | old | new`.
+
+  `:Annodiff`                 index vs worktree
+  `:Annodiff {ref}`           {ref} vs worktree (`HEAD`: uncommitted changes)
+  `:Annodiff --staged [ref]`  {ref} (default `HEAD`) vs index
+  `:Annodiff A..B`            A vs B
+  `:Annodiff A...B`           merge base of A and B vs B
+  `:Annodiff --base [branch]` merge base of {branch} and `HEAD` vs worktree
+  `:Annodiff --pr [N|URL]`    a GitHub pull request, as GitHub diffs it
+  `:Annodiff {file.md} [ref]` a document, see |annodiff-doc-mode|
+  `:Annodiff --doc [file] [ref]`
+
+                                                             *annodiff---base*
+`--base` without a branch uses the default branch: `origin/HEAD`'s target,
+else `origin/main`, `main`, `origin/master`, `master`.
+
+                                                               *annodiff---pr*
+`--pr` needs `gh`; with no number it is the current branch's PR. Nothing is
+checked out: unless the PR head is this worktree's clean `HEAD`, annodiff
+fetches `refs/pull/N/head` and the base branch and reads them read-only.
+
+                                                              *:AnnodiffClose*
+:AnnodiffClose          Close the review in this tab.
+                                                            *:AnnodiffRefresh*
+:AnnodiffRefresh        Reload the changed-file list.
+                                                             *:AnnodiffExport*
+:AnnodiffExport [path]  Write the annotations in revdiff `##` format. Default
+                        path `.git/annodiff/annotations.md`.
+                                                               *:AnnodiffSend*
+:AnnodiffSend           Send the annotations to |annodiff-send|'s command.
+                                                              *:AnnodiffClear*
+:AnnodiffClear[!]       Drop this review's annotations and reviewed marks.
+                        `!` skips the prompt.
+                                                             *:AnnodiffLayout*
+:AnnodiffLayout [inline|split]
+                        Switch layout; no argument toggles.
+
+==============================================================================
+4. DOCUMENTS (DOC MODE)                                    *annodiff-doc-mode*
+
+>vim
+  :Annodiff docs/plan.md          " a markdown path opens doc mode
+  :Annodiff --doc notes.txt       " --doc forces it, for any file
+  :Annodiff --doc                 " the current buffer's file
+  :Annodiff docs/plan.md main     " also mark what changed since main
+<
+The tab is `index | document`: the file in one editable window and, in place
+of the file tree, its markdown headings nested by level. `<CR>` / `o` on a
+heading jumps there, `<Tab>` / `<S-Tab>` step between headings. With a ref,
+lines changed since it are marked as in the inline layout.
+
+The file need not be in a git repository. Outside one its directory is the
+review's root, a ref is refused, and state lives under
+`stdpath("state")/annodiff/docs/`.
+
+==============================================================================
+5. LAYOUTS                                                  *annodiff-layouts*
+
+split (default)  `tree | old | new` in Neovim's diff mode.
+inline           `tree | new`: added lines highlighted, removed lines drawn as
+                 ghost rows above the line they were removed before.
+
+Pick per review with `--inline` / `--split`, set `layout` in
+|annodiff-config|, or toggle with `<localleader>i` / |:AnnodiffLayout|.
+
+In inline, `<localleader>a`, `c` and `d` on a line with ghost rows above it
+open a picker: the line, a removed line, or the whole removed block.
+
+==============================================================================
+6. KEYS                                                        *annodiff-keys*
+
+Buffer-local to the review. Change or disable them (`false`) under `keymaps`
+in |annodiff-config|.
+
+  `<Tab>` / `<S-Tab>`       everywhere      next / previous file
+  `]c` / `[c`               diff windows    next / previous hunk, across files
+  `<CR>` / `o`              tree            open file, toggle directory
+  `R`                       tree            refresh the file list
+  `q`                       tree, scratch   close the review
+  `<localleader>a`          diff (n / v)    annotate line or range; edit
+  `<localleader>A`          everywhere      file-level annotation
+  `<localleader>d`          diff windows    delete annotation under cursor
+  `<localleader>l`          everywhere      pick an annotation and jump
+  `<localleader>n` / `N`    everywhere      next / previous annotation
+  `<Space>`                 tree            mark file reviewed
+  `<localleader>r`          diff windows    mark open file reviewed
+  `f` / `F`                 tree            only annotated / unreviewed files
+  `<localleader>s` / `O`    everywhere/tree send annotations
+  `<localleader>c`          diff (n / v)    ask the agent, or open the thread
+  `<localleader>C`          everywhere      ask about the file
+  `<localleader>i`          everywhere      toggle split / inline
+
+In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` /
+`<Esc>` in normal mode cancels.
+
+==============================================================================
+7. ANNOTATIONS                                          *annodiff-annotations*
+
+Records follow revdiff: `+` added line (new-side number), `-` removed line
+(old-side number), ` ` context line, file-level, and `start-end` ranges.
+
+Each review keeps its annotations and reviewed marks in
+`.git/annodiff/reviews/<review>.json` and restores them when the same review
+is opened again. Annotations follow their line's text when code moves; when
+the text is gone they are kept and flagged "orphaned".
+
+On close, a review with annotations writes a history entry in revdiff's
+format to `$REVDIFF_HISTORY_DIR` or `~/.config/revdiff/history/<repo>/`.
+Turn off with `history = false`.
+
+==============================================================================
+8. SENDING TO AN AGENT                                         *annodiff-send*
+
+|:AnnodiffSend| pipes the full current set, in revdiff `##` format, to a shell
+command on stdin and writes the same snapshot to the export file. The command
+is `send_command`, then `$ANNODIFF_SEND_COMMAND`, then
+`$REVDIFF_POST_FLUSH_COMMAND`. With `send_on_close = true` (or
+`$ANNODIFF_SEND_ON_CLOSE=1`) closing the review sends again if the set
+changed.
+
+The `/annodiff` Claude Code skill is built on this; it is installed as a
+Claude Code plugin, separately from this Neovim plugin (see the README).
+
+==============================================================================
+9. ASKING AN AGENT INLINE                                       *annodiff-ask*
+
+`<localleader>c` (`C` for the file) asks a headless, read-only `claude -p`
+about the line, range or file. The answer streams in under the line. On a
+line with a thread, the same key opens it: `c` follow-up or retry, `y`
+promote to an annotation, `x` cancel, `d` delete, `q` close.
+
+Threads fork `$ANNODIFF_AGENT_PARENT_SESSION` (or
+`$REVDIFF_AGENT_PARENT_SESSION`) when set. Turn the feature off with
+`agent = false`.
+
+==============================================================================
+10. CONFIGURATION                         *annodiff-config* *annodiff.setup()*
+
+>lua
+  require("annodiff").setup({
+    tree_width = 35,
+    layout = "split", -- or "inline"
+    history = true, -- revdiff-format history entry on close
+    history_dir = nil, -- $REVDIFF_HISTORY_DIR or ~/.config/revdiff/history
+    send_command = nil, -- sh -c; annotations on stdin
+    send_on_close = false,
+    agent = { -- false turns inline questions off
+      binary = "claude",
+      model = nil, -- e.g. "haiku"
+      args = {}, -- extra CLI arguments, appended last
+      system_prompt = nil, -- replaces the default answer guidance
+    },
+    keymaps = {
+      next_file = "<Tab>",
+      prev_file = "<S-Tab>",
+      next_hunk = "]c",
+      prev_hunk = "[c",
+      select = { "<CR>", "o" },
+      refresh = "R",
+      close = "q",
+      annotate = "<localleader>a",
+      annotate_file = "<localleader>A",
+      delete_annotation = "<localleader>d",
+      list_annotations = "<localleader>l",
+      next_annotation = "<localleader>n",
+      prev_annotation = "<localleader>N",
+      toggle_reviewed = "<localleader>r",
+      tree_toggle_reviewed = "<Space>",
+      filter_annotated = "f",
+      filter_unreviewed = "F",
+      send = "<localleader>s",
+      tree_send = "O",
+      ask = "<localleader>c",
+      ask_file = "<localleader>C",
+      toggle_layout = "<localleader>i",
+    },
+  })
+<
+Options merge into the defaults, so pass only what you change. Set any key to
+`false` to disable it.
+
+==============================================================================
+11. LUA API                                                     *annodiff-api*
+
+`require("annodiff")`:
+
+  setup({opts})     see |annodiff-config|
+  open({args})      same arguments as |:Annodiff|, as a list:
+                    `open({ "--base", "main" })`
+  close()           |:AnnodiffClose|
+  refresh()         |:AnnodiffRefresh|
+  export({path})    |:AnnodiffExport|
+  send()            |:AnnodiffSend|
+  clear({force})    |:AnnodiffClear|
+
+ vim:tw=78:ts=8:ft=help:norl:
