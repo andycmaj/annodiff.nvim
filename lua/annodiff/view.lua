@@ -1082,7 +1082,7 @@ function M.refresh(s)
   if cursor and s.files[index].path == path then
     pcall(api.nvim_win_set_cursor, s.win_new, cursor)
   else
-    goto_hunk(s.win_new, "first")
+    goto_hunk(s, "first")
   end
 end
 
