@@ -21,7 +21,15 @@ Neovim 0.10+, no dependencies.
 lazy.nvim:
 
 ```lua
-{ "andycmaj/annodiff.nvim", cmd = { "Annodiff" }, opts = {} }
+return {
+  dir = "~/workspace/andycmaj/annodiff.nvim",
+  name = "annodiff.nvim",
+  cmd = { "Annodiff", "AnnodiffClose", "AnnodiffRefresh", "AnnodiffExport", "AnnodiffSend", "AnnodiffClear" },
+  opts = {
+    layout = "inline",
+    -- agent = { model = "haiku" },  -- optional: cheaper/faster inline answers
+  },
+}
 ```
 
 ## Use
