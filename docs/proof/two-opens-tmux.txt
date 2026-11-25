@@ -1,0 +1,49 @@
+# docs/proof/two-opens-tmux.sh <checkout> <scratch>: real tmux 3.8, real nvim v0.12.5. $S = scratch dir.
+
+### BEFORE (84ad58f: RIKER-0213's open.sh, no lock)
+## 1. open grill round 3 (doc mode)
+opened annodiff (--doc $S/p-before/docs/grill-round-3.md) in a new tmux window, in $S/p-before/docs; notes will be sent to pane %0
+(exit 0)
+annodiff windows: 1
+
+## 2. while it is still open, open the one-pager from the same pane
+opened annodiff (--doc $S/p-before/docs/one-pager.md) in a new tmux window, in $S/p-before/docs; notes will be sent to pane %0
+(exit 0)
+annodiff windows: 2
+
+## 3. annotate round 3 line 3 in the first review, \q (send and quit)
+annodiff windows: 1
+----- claude pane (%0) -----
+annodiff annotations (from /annodiff nvim; the review is closed, this is the final set):
+## grill-round-3.md:3 ( )
+theecond waysecond way
+-------------------------------
+
+## 4. now open the one-pager
+opened annodiff (--doc $S/p-before/docs/one-pager.md) in a new tmux window, in $S/p-before/docs; notes will be sent to pane %0
+(exit 0)
+annodiff windows: 2
+
+### AFTER (this branch)
+## 1. open grill round 3 (doc mode)
+opened annodiff (--doc $S/p-after/docs/grill-round-3.md) in a new tmux window, in $S/p-after/docs; notes will be sent to pane %0
+(exit 0)
+annodiff windows: 1
+
+## 2. while it is still open, open the one-pager from the same pane
+error: a review opened from this pane is still open (grill-round-3.md, pane %1): wait for its close message (the user sends notes and closes it, or \q sends and quits), then open this one
+(exit 1)
+annodiff windows: 1
+
+## 3. annotate round 3 line 3 in the first review, \q (send and quit)
+annodiff windows: 0
+----- claude pane (%0) -----
+annodiff annotations (from /annodiff nvim, review: grill-round-3.md; the review is closed, this is the final set):
+## grill-round-3.md:3 ( )
+theecond waysecond way
+-------------------------------
+
+## 4. now open the one-pager
+opened annodiff (--doc $S/p-after/docs/one-pager.md) in a new tmux window, in $S/p-after/docs; notes will be sent to pane %0
+(exit 0)
+annodiff windows: 1

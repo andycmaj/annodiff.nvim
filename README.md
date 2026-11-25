@@ -349,7 +349,13 @@ Closing the review always tells Claude, notes or not: unsent notes arrive as the
 set, and a review closed with nothing to say arrives as `annodiff review closed ...: no
 annotations, so no edits or suggestions`, so Claude carries on instead of waiting. If
 Neovim quits before any review closed (it failed to open: no changes, a bad ref),
-Claude gets `annodiff exited ... without closing a review`.
+Claude gets `annodiff exited ... without closing a review`. Every message names its
+review (`from /annodiff nvim, review: plan.md` or `review: --base main`).
+
+One review at a time per Claude session: while one is open, a second `/annodiff` from
+the same session is refused (`error: a review opened from this pane is still open`), so
+nothing opens over a review you are still in. Its close message frees the session for
+the next one.
 
 With no args Claude asks which diff to review, offering only what applies:
 

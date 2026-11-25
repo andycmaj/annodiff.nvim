@@ -2,6 +2,7 @@
 # Open :Annodiff in Neovim beside the calling Claude pane. Notes sent with \s (or O in
 # the tree), and any unsent notes on close, are pasted back into that pane; every close
 # (and a Neovim exit with no review closed) pastes a line saying so, notes or not.
+# One review at a time per Claude pane: a second open.sh is refused until the first closes.
 # usage: open.sh [annodiff args...]
 #   No args: nothing opens; "needs_ask: true" is printed with the kinds of diff that
 #   apply here (see choices below), for the skill to ask which one.
@@ -20,6 +21,14 @@ fi
 plugin="$(cd "$dir/../../.." && pwd)" # this repo; loaded after the user's config so it wins
 [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || { echo "error: not inside tmux" >&2; exit 1; }
 command -v nvim >/dev/null 2>&1 || { echo "error: nvim not found in PATH" >&2; exit 1; }
+# One review per Claude pane: refuse while one opened from this pane is still open, before
+# anything is asked or opened (review-lock.sh; a close or Neovim exit frees it).
+if ! busy="$("$dir/review-lock.sh" check "$TMUX_PANE")"; then
+  label="${busy%%$'\t'*}" where="${busy#*$'\t'}"
+  [ "$where" = starting ] && where="still starting" || where="pane $where"
+  echo "error: a review opened from this pane is still open ($label, $where): wait for its close message (the user sends notes and closes it, or \\q sends and quits), then open this one" >&2
+  exit 1
+fi
 # A document instead of a diff: `--doc <file> [ref]`, or a markdown file as the first
 # argument. The file can be anywhere, in a repo or not (an agent's message written to a
 # scratch dir); Neovim runs from its repo, else from its directory.
@@ -131,17 +140,24 @@ case " ${args[*]} " in *" --pr "* | *" --pr="*)
 esac
 
 argstr=""; for a in "${args[@]}"; do argstr+=" $(printf '%q' "$a")"; done
+# What notes and close messages name as their review, so two reviews in a row never mix:
+# the document's file name (and ref), else the diff args.
+if [ -n "$doc" ]; then label="$(basename "$file")${ref:+ $ref}"; else label="${args[*]}"; fi
 deliver="$(printf '%q' "$dir/deliver.sh") $(printf '%q' "$TMUX_PANE")"
 # always: every close runs deliver.sh, notes or not, so this session hears the review
 # ended (no annotations = no edits or suggestions) instead of waiting on nothing
-env_prefix="ANNODIFF_SEND_COMMAND=$(printf '%q' "$deliver") ANNODIFF_SEND_ON_CLOSE=always"
+env_prefix="ANNODIFF_SEND_COMMAND=$(printf '%q' "$deliver") ANNODIFF_SEND_ON_CLOSE=always ANNODIFF_REVIEW_LABEL=$(printf '%q' "$label")"
 # inline agent threads fork from this Claude session
 [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && env_prefix+=" ANNODIFF_AGENT_PARENT_SESSION=$(printf '%q' "claude:$CLAUDE_CODE_SESSION_ID")"
 vimcmd="set rtp^=$plugin | runtime plugin/annodiff.lua | Annodiff$argstr"
 # When Neovim exits without any review having closed (it failed to open: no changes, a
 # bad ref), deliver.sh says so too; the mark tells it a close already reported.
 mark="$(mktemp -d "${TMPDIR:-/tmp}/annodiff-closed.XXXXXX")/closed"
-cmd="export ANNODIFF_CLOSED_MARK=$(printf '%q' "$mark"); env $env_prefix nvim -c $(printf '%q' "$vimcmd"); ANNODIFF_SEND_REASON=exit $deliver </dev/null"
+# The review pane attaches itself to this pane's lock as it starts; deliver.sh frees the
+# lock when the review closes or Neovim exits.
+attach="$(printf '%q' "$dir/review-lock.sh") attach $(printf '%q' "$TMUX_PANE")"
+cmd="export ANNODIFF_CLOSED_MARK=$(printf '%q' "$mark") ANNODIFF_REVIEW_LABEL=$(printf '%q' "$label"); $attach; env $env_prefix nvim -c $(printf '%q' "$vimcmd"); ANNODIFF_SEND_REASON=exit $deliver </dev/null"
+"$dir/review-lock.sh" take "$TMUX_PANE" "$label"
 # inside a riker (formerly aug) task window: a zoomed split of this window, so it shows in its viewer
 tools="$(tmux display-message -p -t "$TMUX_PANE" '#{@riker_tools}' 2>/dev/null || true)"
 [ -n "$tools" ] || tools="$(tmux display-message -p -t "$TMUX_PANE" '#{@aug_tools}' 2>/dev/null || true)"

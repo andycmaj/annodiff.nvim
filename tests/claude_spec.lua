@@ -95,6 +95,8 @@ if [ "$1" = display-message ]; then
   case "$*" in *riker_tools*) printf '%%s\n' "${STUB_TOOLS:-}" ;; *) echo ;; esac
   exit 0
 fi
+# the review lock (pane options): nothing held; real tmux covers it below
+case "$1" in show-options | set-option) exit 0 ;; esac
 printf '%%s\n' "$*" >> %s
 ]]):format(vim.fn.shellescape(log)),
     "755"
@@ -137,6 +139,8 @@ printf '%s\n' "$STUB_GH_PR"
     truthy(calls:find("deliver.sh", 1, true) and calls:find("%99", 1, true), "deliver.sh targets the calling pane")
     truthy(calls:find("set rtp^=" .. root, 1, true), "loads this checkout's annodiff")
     truthy(calls:find("ANNODIFF_SEND_ON_CLOSE=always", 1, true), "every close reaches this pane, notes or not")
+    truthy(calls:find("ANNODIFF_REVIEW_LABEL=HEAD", 1, true), "notes name the review they came from")
+    truthy(calls:find("review-lock.sh attach %99", 1, true), "the review pane takes this pane's lock")
     truthy(calls:find("export ANNODIFF_CLOSED_MARK=", 1, true), calls)
     truthy(calls:find("; ANNODIFF_SEND_REASON=exit [^;]*deliver%.sh %%99 </dev/null"), "an exit with no close is reported")
   end)
@@ -273,6 +277,158 @@ printf '%s\n' "$STUB_GH_PR"
   end)
 end)
 
+-- Two opens from one Claude pane, on a real (private) tmux server: open.sh, the review
+-- wrapper, deliver.sh and review-lock.sh all run for real. Only Neovim is a stand-in, and
+-- the "Claude" pane runs `cat` into a file, so what was pasted there can be read back.
+describe("one review per Claude pane (real tmux)", function()
+  if vim.fn.executable("tmux") == 0 then
+    it("skipped: no tmux", function() end)
+    return
+  end
+  local open = root .. "/skills/annodiff/scripts/open.sh"
+  local lock = root .. "/skills/annodiff/scripts/review-lock.sh"
+  local tmp = vim.fn.resolve(vim.fn.tempname())
+  local bin, ctl, docs = tmp .. "/bin", tmp .. "/ctl", tmp .. "/docs"
+  local pasted = tmp .. "/claude.txt"
+  vim.fn.mkdir(ctl, "p")
+  write(docs .. "/a.md", "# A\n")
+  write(docs .. "/b.md", "# B\n")
+  write(docs .. "/c.md", "# C\n")
+  -- stand-in Neovim: obeys $ctl/<its pane>: "close" runs the send command as a review
+  -- close does (the real one: deliver.sh), "quit" exits
+  write(
+    bin .. "/nvim",
+    ([[#!/bin/sh
+f=%s/"$TMUX_PANE"
+while :; do
+  if [ -e "$f" ]; then
+    order="$(cat "$f")"; rm -f "$f"
+    case "$order" in
+      close) ANNODIFF_SEND_REASON=close ANNODIFF_ANNOTATION_COUNT=0 sh -c "$ANNODIFF_SEND_COMMAND" </dev/null ;;
+      quit) exit 0 ;;
+    esac
+  fi
+  sleep 0.05
+done
+]]):format(ctl),
+    "755"
+  )
+  local sock = "annodiff-test-" .. vim.fn.getpid()
+  local server_env = { PATH = bin .. ":" .. vim.env.PATH, TMUX = "", TMUX_PANE = "" }
+  local function T(args)
+    return run(vim.list_extend({ "tmux", "-L", sock }, args), { env = server_env })
+  end
+  local started = T({
+    "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "200", "-y", "50",
+    "stty -echo; exec cat > " .. vim.fn.shellescape(pasted),
+    ";", "set", "-g", "default-shell", "/bin/sh",
+  })
+  assert(started.code == 0, started.stderr)
+  local claude = vim.trim(T({ "display-message", "-p", "-t", "t:0", "#{pane_id}" }).stdout)
+  local socket_path = vim.trim(T({ "display-message", "-p", "#{socket_path}" }).stdout)
+  local env = { PATH = server_env.PATH, TMUX = socket_path .. ",0,0", TMUX_PANE = claude, CLAUDE_PLUGIN_DATA = "" }
+
+  local function open_doc(name)
+    return run({ open, "--doc", docs .. "/" .. name }, { env = env })
+  end
+  local function option(name)
+    return vim.trim(T({ "show-options", "-pqv", "-t", claude, name }).stdout)
+  end
+  local function windows()
+    return #vim.split(vim.trim(T({ "list-windows", "-t", "t", "-F", "#{window_id}" }).stdout), "\n")
+  end
+  -- the review pane holding the lock, once it has started
+  local function attached(not_pane)
+    local p
+    vim.wait(5000, function()
+      p = option("@annodiff_review_pane")
+      return p ~= "" and p ~= not_pane
+    end, 20)
+    assert(p ~= "" and p ~= not_pane, "the review never attached to the lock")
+    return p
+  end
+  local function order(pane, what)
+    write(ctl .. "/" .. pane, what)
+  end
+  local function claude_saw(text)
+    vim.wait(5000, function()
+      return (read(pasted) or ""):find(text, 1, true) ~= nil
+    end, 20)
+    return read(pasted) or ""
+  end
+
+  it("a second open is refused while the first review is open; the close frees the pane", function()
+    local res = open_doc("a.md")
+    eq(0, res.code, res.stderr)
+    local a = attached()
+    eq("a.md", option("@annodiff_review"))
+    eq(2, windows())
+
+    res = open_doc("b.md")
+    eq(1, res.code)
+    eq(1, res.stderr:find("error: a review opened from this pane is still open (a.md, pane " .. a .. ")", 1, true), res.stderr)
+    truthy(res.stderr:find("wait for its close message", 1, true), res.stderr)
+    eq(2, windows(), "nothing opened over the first review")
+    -- no-args (which would ask which diff) is refused too, before asking
+    res = run({ open }, { env = env, cwd = root })
+    eq(1, res.code)
+    eq(nil, res.stdout:find("needs_ask", 1, true))
+
+    order(a, "close")
+    local seen = claude_saw("review closed (from /annodiff nvim, review: a.md)")
+    truthy(seen:find("annodiff review closed (from /annodiff nvim, review: a.md): no annotations", 1, true), seen)
+    eq("", option("@annodiff_review"), "a close frees the lock, even while Neovim stays open")
+
+    res = open_doc("b.md")
+    eq(0, res.code, res.stderr)
+    local b = attached(a)
+    eq("b.md", option("@annodiff_review"))
+
+    -- the first review's Neovim quits late: it must not free b's lock
+    order(a, "quit")
+    vim.wait(3000, function()
+      return windows() == 2
+    end, 20)
+    eq(2, windows(), "a's window is gone")
+    eq(b, option("@annodiff_review_pane"))
+    res = open_doc("c.md")
+    eq(1, res.code)
+    truthy(res.stderr:find("(b.md, pane " .. b .. ")", 1, true), res.stderr)
+
+    -- Neovim exiting with no close frees it too, and says which review it was
+    order(b, "quit")
+    seen = claude_saw("annodiff exited (from /annodiff nvim, review: b.md)")
+    truthy(seen:find("annodiff exited (from /annodiff nvim, review: b.md) without closing a review", 1, true), seen)
+    eq("", option("@annodiff_review"))
+  end)
+
+  it("a lock whose review pane is gone, or that never attached, is stale", function()
+    local res = open_doc("c.md")
+    eq(0, res.code, res.stderr)
+    local c = attached()
+    T({ "kill-pane", "-t", c }) -- killed, so nothing ran deliver.sh
+    eq("c.md", option("@annodiff_review"))
+    res = open_doc("a.md")
+    eq(0, res.code, res.stderr)
+    local a = attached(c)
+    order(a, "quit")
+    vim.wait(3000, function()
+      return option("@annodiff_review") == ""
+    end, 20)
+
+    -- taken but never attached (the launch failed): busy for the grace period, then stale
+    eq(0, run({ lock, "take", claude, "x.md" }, { env = env }).code)
+    res = run({ lock, "check", claude }, { env = env })
+    eq(1, res.code)
+    eq("x.md\tstarting\n", res.stdout)
+    res = run({ lock, "check", claude }, { env = vim.tbl_extend("force", env, { ANNODIFF_LOCK_GRACE = "0" }) })
+    eq(0, res.code)
+    eq("", option("@annodiff_review"), "check clears a stale lock")
+  end)
+
+  T({ "kill-server" })
+end)
+
 describe("deliver.sh: portability and failures", function()
   local script = root .. "/skills/annodiff/scripts/deliver.sh"
   local real_mktemp = vim.fn.exepath("mktemp")
@@ -362,7 +518,8 @@ printf '%%s\n' "$*" >> %s
   local function deliver_with(stdin, extra)
     os.remove(pasted)
     os.remove(log)
-    local env = vim.tbl_extend("force", { PATH = bin .. ":" .. vim.env.PATH }, extra or {})
+    -- TMUX_PANE: not the review's pane (as when the tests run inside tmux), so no lock calls
+    local env = vim.tbl_extend("force", { PATH = bin .. ":" .. vim.env.PATH, TMUX_PANE = "" }, extra or {})
     local res = run({ deliver, "%7" }, { env = env, stdin = stdin })
     eq(0, res.code, res.stderr)
     return read(pasted), read(log) or ""
@@ -392,6 +549,15 @@ printf '%%s\n' "$*" >> %s
   it("closing with nothing new since the last send says the sent set is final", function()
     local text = deliver_with("", { ANNODIFF_SEND_REASON = "close", ANNODIFF_ANNOTATION_COUNT = "3" })
     truthy(text:find("^annodiff review closed .*nothing new since the last send; the 3 annotation%(s%) already sent are the final set"), text)
+  end)
+
+  it("every header names the review when open.sh gave its label", function()
+    local text = deliver_with("## a.txt:1 (+)\nfix\n", { ANNODIFF_REVIEW_LABEL = "--base main" })
+    eq("annodiff annotations (from /annodiff nvim, review: --base main):\n\n## a.txt:1 (+)\nfix\n", text)
+    text = deliver_with("", { ANNODIFF_SEND_REASON = "close", ANNODIFF_REVIEW_LABEL = "plan.md" })
+    truthy(text:find("^annodiff review closed %(from /annodiff nvim, review: plan%.md%): no annotations"), text)
+    text = deliver_with("", { ANNODIFF_SEND_REASON = "exit", ANNODIFF_REVIEW_LABEL = "HEAD~1" })
+    truthy(text:find("^annodiff exited %(from /annodiff nvim, review: HEAD~1%) without"), text)
   end)
 
   it("closing with unsent notes sends them as the final set", function()
