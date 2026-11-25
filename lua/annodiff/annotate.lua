@@ -117,10 +117,11 @@ function M.clear(s)
 end
 
 --- Copy extmark positions back into the records (edits in the real buffer move them).
+--- Records are annotations and agent threads; both follow their line.
 ---@param s annodiff.Session
 function M.sync(s)
   for _, m in ipairs(s.marks or {}) do
-    local a = m.annotation
+    local a = m.annotation or m.thread
     -- orphans and marks drawn at a clamped row are not where the record says:
     -- reading them back would rewrite the record with an unrelated line
     if a.line > 0 and not a.orphan and not m.clamped and api.nvim_buf_is_valid(m.buf) then
@@ -129,7 +130,12 @@ function M.sync(s)
         local line = pos[1] + 1
         a.anchor = api.nvim_buf_get_lines(m.buf, pos[1], pos[1] + 1, false)[1] or a.anchor
         if line ~= a.line then
-          local existing = s.store:find(a.file, line, a.type)
+          local existing
+          if m.thread then
+            existing = s.threads and s.threads:get(a.file, line, a.type)
+          else
+            existing = s.store:find(a.file, line, a.type)
+          end
           if not existing or existing == a then
             if a.end_line then
               a.end_line = a.end_line + (line - a.line)
@@ -185,20 +191,34 @@ function M.pad(s, h, side, line, height)
   M.track(s, buf)
 end
 
---- Records loaded from disk point at the line where they were saved. Find
---- their anchor text again: same line, else the nearest line with that text.
---- New-side records are reclassified ("+" may have become context). Not found
---- means orphaned: kept, drawn at the old line, flagged.
+--- Annotations and agent threads of the open file: everything drawn at a line.
+---@param s annodiff.Session
+---@param path string
+local function records(s, path)
+  local out = vim.list_slice(s.store:get(path))
+  if s.threads then
+    vim.list_extend(out, s.threads:for_file(path))
+  end
+  return out
+end
+
+--- Records loaded from disk, or whose file was reloaded or refreshed, point at
+--- the line they were on before. Find their anchor text again: same line, else
+--- the nearest line with that text. New-side records are reclassified ("+" may
+--- have become context). Not found means orphaned: kept, drawn at the old line,
+--- flagged.
 ---@param s annodiff.Session
 ---@param h? annodiff.Hunk[]
 function M.reanchor(s, h)
   local e = entry(s)
-  for _, a in ipairs(s.store:get(e.path)) do
+  local lines_of = {}
+  for _, a in ipairs(records(s, e.path)) do
     if a.pending then
       a.pending = nil
       if a.line > 0 and a.anchor then
         local side = a.type == "-" and "old" or "new"
-        local lines = M.side_lines(s, side)
+        lines_of[side] = lines_of[side] or M.side_lines(s, side)
+        local lines = lines_of[side]
         local found
         if lines[a.line] == a.anchor then
           found = a.line
@@ -226,6 +246,27 @@ function M.reanchor(s, h)
           a.orphan = true
         end
       end
+    end
+  end
+end
+
+--- The lines under a file's marks may have moved: a file reloaded from disk
+--- keeps its marks at the same row numbers whatever changed, and a file opened
+--- again (next file, refresh) may have changed while it was away. Re-find its
+--- records by their anchor text on the next draw instead of trusting the marks.
+---@param s annodiff.Session
+---@param path string
+function M.unanchor(s, path)
+  local keep = {}
+  for _, m in ipairs(s.marks or {}) do
+    if (m.annotation or m.thread).file ~= path then
+      table.insert(keep, m)
+    end
+  end
+  s.marks = keep
+  for _, a in ipairs(records(s, path)) do
+    if a.line > 0 and a.anchor then
+      a.pending = true
     end
   end
 end

@@ -214,3 +214,110 @@ describe("ask the agent", function()
     vim.env.ANNODIFF_AGENT_PARENT_SESSION = nil
   end)
 end)
+
+-- RIKER-0259: an answer showed up too far up after the file gained lines above its
+-- line and the review was refreshed. Threads kept the line number they were asked
+-- on; a file reload left annotation marks at stale rows too.
+describe("threads follow their line", function()
+  local repo = vim.fn.resolve(vim.fn.tempname())
+  vim.fn.mkdir(repo, "p")
+  sh(repo, { "git", "init", "-q", "-b", "main" })
+  local long = "local long = { " .. string.rep("'word', ", 40) .. "}"
+  local base = { long, "local a = 1", long, "local b = 2", "local c = 3", "return a" }
+  vim.fn.writefile(base, repo .. "/w.lua")
+  sh(repo, { "git", "add", "-A" })
+  sh(repo, { "git", "commit", "-q", "-m", "init" })
+  -- line 4 changed, line 6 added
+  local work = { long, "local a = 1", long, "local b = 20", "local c = 3", "local d = 4", "return a" }
+  vim.fn.writefile(work, repo .. "/w.lua")
+  vim.cmd.cd(repo)
+  vim.env.FAKE_CLAUDE_RECORD = repo .. "/rec"
+  vim.env.FAKE_CLAUDE_MODE = "ok"
+  config.options.agent = { binary = fake }
+  quiet(function()
+    vim.cmd("Annodiff --inline HEAD")
+  end)
+  local s = require("annodiff.view").current()
+  vim.wo[s.win_new].wrap = true
+
+  --- Buffer row each thread's / annotation's rows are drawn under: { [first row text] = row }.
+  local function drawn()
+    local out = {}
+    for _, m in ipairs(api.nvim_buf_get_extmarks(s.buf_new, annotate.ns, 0, -1, { details = true })) do
+      for _, line in ipairs(m[4].virt_lines or {}) do
+        local parts = {}
+        for _, chunk in ipairs(line) do
+          table.insert(parts, chunk[1])
+        end
+        local text = vim.trim(table.concat(parts))
+        if text:find("^⟢ Q:") or text:find("^▍") then
+          out[text] = m[2] + 1
+        end
+      end
+    end
+    return out
+  end
+
+  local function reload(lines)
+    vim.fn.writefile(lines, repo .. "/w.lua")
+    -- a later mtime, or checktime may not see the change within the same second
+    local t = os.time() + 5
+    vim.uv.fs_utime(repo .. "/w.lua", t, t)
+  end
+
+  it("asks on wrapped-file lines land under their line", function()
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 6, 0 })
+    press("\\cwhy d?<C-s>")
+    local t = s.threads:get("w.lua", 6, "+")
+    truthy(t, "thread on the added line")
+    wait_status(t, "idle")
+    api.nvim_win_set_cursor(s.win_new, { 5, 0 })
+    press("\\anote on c<C-s>")
+    eq({ ["⟢ Q: why d?"] = 6, ["▍ note on c"] = 5 }, drawn())
+  end)
+
+  it("an edit above in the real buffer moves the thread with its line", function()
+    api.nvim_buf_set_lines(s.buf_new, 0, 0, false, { "-- typed" })
+    annotate.render(s)
+    eq({ ["⟢ Q: why d?"] = 7, ["▍ note on c"] = 6 }, drawn())
+    truthy(s.threads:get("w.lua", 7, "+"), "thread re-keyed to its new line")
+    api.nvim_buf_call(s.buf_new, function()
+      vim.cmd("silent write")
+    end)
+    eq(false, vim.bo[s.buf_new].modified)
+  end)
+
+  it("lines added above on disk + checktime + refresh: both follow", function()
+    local lines = vim.list_extend({ "-- one", "-- two" }, api.nvim_buf_get_lines(s.buf_new, 0, -1, false))
+    reload(lines)
+    vim.cmd("checktime")
+    quiet(function()
+      require("annodiff.view").refresh(s)
+    end)
+    eq("local d = 4", api.nvim_buf_get_lines(s.buf_new, 8, 9, false)[1])
+    eq({ ["⟢ Q: why d?"] = 9, ["▍ note on c"] = 8 }, drawn())
+  end)
+
+  it("lines added above on disk + refresh alone (refresh reloads the file): both follow", function()
+    local lines = vim.list_extend({ "-- three" }, api.nvim_buf_get_lines(s.buf_new, 0, -1, false))
+    reload(lines)
+    quiet(function()
+      require("annodiff.view").refresh(s)
+    end)
+    eq("local d = 4", api.nvim_buf_get_lines(s.buf_new, 9, 10, false)[1])
+    eq({ ["⟢ Q: why d?"] = 10, ["▍ note on c"] = 9 }, drawn())
+  end)
+
+  it("\\c on the moved line opens its thread, not a new one", function()
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 10, 0 })
+    press("\\c")
+    truthy(s.overlay, "thread window open")
+    press("q")
+    quiet(function()
+      vim.cmd("AnnodiffClose")
+    end)
+    config.options.agent = vim.deepcopy(config.defaults.agent)
+  end)
+end)

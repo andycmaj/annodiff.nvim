@@ -228,7 +228,9 @@ Records follow revdiff: `+` added line (new-side number), `-` removed line
 file-level, and `start-end` ranges. A comment containing the word "hunk" on a
 `+` / `-` line widens to the end of that changed block, as in revdiff.
 
-Annotations on your real file follow edits. Each one gets matching blank
+Annotations and agent threads on your real file follow edits, and changes made
+on disk (a reload, `R` refresh) by finding their line's text again. Each
+annotation gets matching blank
 virtual lines in the other window so the two sides stay row-aligned.
 
 ### Persistence
@@ -302,7 +304,8 @@ thread.*
 the thread's session) or retry after a failure, `y` promote the answer to an
 annotation (an existing annotation there is kept above it), `x` cancel, `d`
 delete, `q` close. The tree header shows `⟢ N answering` while answers stream.
-Threads live for the review; refresh drops threads whose file left it.
+Threads live for the review and follow their line when the code moves;
+refresh drops threads whose file left it.
 
 ![The thread window: question, full answer and the thread keys](docs/images/ask-thread.png)
 

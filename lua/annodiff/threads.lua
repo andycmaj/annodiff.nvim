@@ -14,6 +14,9 @@ local M = {}
 ---@field line integer         0 = file-level
 ---@field end_line? integer
 ---@field type string
+---@field anchor? string        text of the asked line, to find it again when lines move
+---@field orphan? boolean       anchor text no longer found
+---@field pending? boolean      to re-find by anchor text on the next draw
 ---@field turns annodiff.Turn[]
 ---@field status "idle"|"streaming"|"failed"
 ---@field activity? string     last tool use or stall note while streaming
@@ -61,6 +64,7 @@ function Threads:ask(anchor, question)
       line = anchor.line,
       end_line = anchor.end_line,
       type = anchor.type,
+      anchor = anchor.anchor,
       turns = {},
       status = "idle",
       version = 0,

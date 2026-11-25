@@ -623,11 +623,16 @@ local function open_real(s, win, real_path)
   nav_maps(s, buf, { close = false })
   diff_maps(s, buf)
   s.real_buf = buf
-  -- edits shift hunks: redraw annotations (padding, ghost rows) once typing settles
-  s.real_autocmd = api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+  -- edits shift hunks: redraw annotations (padding, ghost rows) once typing settles.
+  -- A reload from disk (checktime, :e) leaves marks at stale rows: re-find the
+  -- records by their text before anything reads the marks back.
+  s.real_autocmd = api.nvim_create_autocmd({ "TextChanged", "InsertLeave", "BufReadPost" }, {
     group = s.augroup,
     buffer = buf,
-    callback = function()
+    callback = function(ev)
+      if ev.event == "BufReadPost" and s.real_buf == buf and s.current and s.files[s.current] then
+        annotate.unanchor(s, s.files[s.current].path)
+      end
       vim.schedule(function()
         if s.real_buf == buf and valid(s) then
           annotate.render(s)
@@ -679,6 +684,7 @@ function M.open_file(s, index, opts)
   annotate.sync(s)
   annotate.save(s)
   annotate.clear(s)
+  annotate.unanchor(s, entry.path) -- it may have changed since it was last drawn
   vim.cmd("diffoff!")
   unmap_real(s)
   local stale = s.hidden_bufs

@@ -256,6 +256,11 @@ end
 ---@param anchor {file: string, line: integer, end_line?: integer, type: string}
 local function ask_new(s, anchor)
   local title = "ask agent: " .. threads_mod.heading(anchor)
+  if anchor.line > 0 then
+    -- the line's text, so the thread can be found again when lines move (refresh)
+    local buf = annotate.buf_of(s, anchor.type == "-" and "old" or "new")
+    anchor.anchor = buf and api.nvim_buf_get_lines(buf, anchor.line - 1, anchor.line, false)[1] or nil
+  end
   annotate.input(title, "", function(text)
     if not text or text == "" then
       return
@@ -483,10 +488,16 @@ function M.render(s, place)
     local count = api.nvim_buf_line_count(buf)
     local last = t.line == 0 and 0 or math.min(t.end_line or t.line, count)
     if t.line > 0 and annotate.win_of(s, side) then
-      pcall(api.nvim_buf_set_extmark, buf, annotate.ns, math.min(t.line, count) - 1, 0, {
+      -- also tracks the line: edits above move it, annotate.sync reads it back
+      local ok, id = pcall(api.nvim_buf_set_extmark, buf, annotate.ns, math.min(t.line, count) - 1, 0, {
         sign_text = "⟢",
         sign_hl_group = "AnnodiffThreadSign",
+        invalidate = true,
+        undo_restore = false,
       })
+      if ok then
+        table.insert(s.marks, { thread = t, buf = buf, id = id, clamped = t.line > count or t.orphan })
+      end
       annotate.track(s, buf)
     end
     place(side, t.line, last, M.preview(t, width))
