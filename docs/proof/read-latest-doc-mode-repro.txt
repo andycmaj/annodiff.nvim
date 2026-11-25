@@ -1,0 +1,29 @@
+# Repro (RIKER-0255 overlap): read-latest.sh misses doc-mode notes saved outside git.
+# Real tmux server, real nvim (empty config, isolated state dir), real open.sh/deliver.sh/read-latest.sh at f9d9d19.
+# Produced by docs/proof/read-latest-doc-mode-repro.sh <checkout> <scratch dir>.
+
+== 1. Claude (pane %0, cwd = a git repo) opens its last turn in annodiff:
+$ open.sh --doc $SCRATCH/repro-scratch/grill-round.md
+opened annodiff (--doc $SCRATCH/repro-scratch/grill-round.md) in a new tmux window, in $SCRATCH/repro-scratch; notes will be sent to pane %0
+
+== 2. the Claude pane goes away (session restarted / pane moved), then the owner annotates line 3 and closes the review
+annodiff says:
+annodiff: send command failed (exit 1): can't find pane: %0
+annodiff: 1 annotation(s) saved to /private/tmp/claude-501/-Users-ac-workspace-andycmaj-annodiff-nvim-bug-closing-annodiff-with-no-edits-shoul/0543392f-c8f5-406
+
+== 3. the notes are on disk, in annodiff's state folder:
+$SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/annotations.md
+$SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/review.json
+--- annotations.md:
+## grill-round.md:3 ( )
+no need. commands are fine here
+
+== 4. owner: "use my latest annodiff annotations" -> skill runs read-latest.sh
+-- from the Claude session's cwd (a git repo):
+stdout: []
+-- from the scratch dir itself:
+stdout: []
+-- revdiff history dir (no entry: history is off outside a repo):
+(does not exist)
+
+Result: notes saved under stdpath("state")/annodiff/docs/, read-latest.sh prints nothing.
