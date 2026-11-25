@@ -416,8 +416,19 @@ describe(":Annodiff --doc on a file outside any git repo (an agent's message)", 
       eq(0, res.code, res.stderr)
       eq("source: " .. path .. "\n\n## turn.md:3 ( )\nyes, stable\n", res.stdout)
     end
-    -- without --doc, from a dir that is not a repo, there is nothing
-    eq("", vim.system({ script }, { cwd = other, text = true }):wait().stdout)
+    -- without --doc, from a dir that is not a repo: the newest document notes (RIKER-0255)
+    eq("source: " .. path .. "\n\n## turn.md:3 ( )\nyes, stable\n", vim.system({ script }, { cwd = other, text = true }):wait().stdout)
+  end)
+
+  it("keeps the export current on every change, before any send or close (RIKER-0255)", function()
+    local path = annotate.default_path(s)
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 7, 0 })
+    press("\\aoption b<C-s>")
+    eq({ "## turn.md:3 ( )", "yes, stable", "", "## turn.md:7 ( )", "option b" }, vim.fn.readfile(path))
+    api.nvim_win_set_cursor(s.win_new, { 7, 0 })
+    press("\\d")
+    eq({ "## turn.md:3 ( )", "yes, stable" }, vim.fn.readfile(path), "a delete is written too")
   end)
 
   it("closing writes no revdiff history entry, and reopening restores the note", function()

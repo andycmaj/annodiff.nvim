@@ -515,12 +515,14 @@ printf '%%s\n' "$*" >> %s
 ]]):format(vim.fn.shellescape(pasted), vim.fn.shellescape(log)),
     "755"
   )
+  local nowhere = vim.fn.tempname() -- not a repo: read-latest.sh (exit) sees no checkout's notes
+  vim.fn.mkdir(nowhere, "p")
   local function deliver_with(stdin, extra)
     os.remove(pasted)
     os.remove(log)
     -- TMUX_PANE: not the review's pane (as when the tests run inside tmux), so no lock calls
     local env = vim.tbl_extend("force", { PATH = bin .. ":" .. vim.env.PATH, TMUX_PANE = "" }, extra or {})
-    local res = run({ deliver, "%7" }, { env = env, stdin = stdin })
+    local res = run({ deliver, "%7" }, { env = env, stdin = stdin, cwd = nowhere })
     eq(0, res.code, res.stderr)
     return read(pasted), read(log) or ""
   end
@@ -580,6 +582,41 @@ printf '%%s\n' "$*" >> %s
     truthy(text:find("^annodiff exited %(from /annodiff nvim%) without closing a review"), text)
     truthy(text:find("no edits or suggestions", 1, true), text)
   end)
+
+  it("exit waits for a close still on its way (the TUI gone, its server finishing)", function()
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    local mark = dir .. "/closed"
+    vim.system({ "sh", "-c", "sleep 0.5; : > " .. vim.fn.shellescape(mark) })
+    local text, calls = deliver_with("", { ANNODIFF_SEND_REASON = "exit", ANNODIFF_CLOSED_MARK = mark })
+    eq(nil, text, "the close reported it; exit adds nothing")
+    eq("", calls)
+  end)
+
+  it("Neovim killed before a close: notes saved since the review opened are pasted, older ones are not", function()
+    local state = vim.fn.tempname()
+    local notes = state .. "/nvim/annodiff/docs/0123456789ab-turn.md/annotations.md"
+    local function exit_with_notes(note_time)
+      local dir = vim.fn.tempname()
+      vim.fn.mkdir(dir, "p")
+      run({ "touch", "-t", "202501010000", dir }) -- the review opened then
+      write(notes, "## turn.md:3 ( )\nsaved, never sent\n")
+      run({ "touch", "-t", note_time, notes })
+      local env = { ANNODIFF_SEND_REASON = "exit", ANNODIFF_CLOSED_MARK = dir .. "/closed" }
+      env.XDG_STATE_HOME, env.REVDIFF_HISTORY_DIR = state, vim.fn.tempname()
+      return deliver_with("", env), dir
+    end
+    local text, dir = exit_with_notes("202601010000")
+    eq(
+      "annodiff exited (from /annodiff nvim) before the review closed (Neovim was killed?); these notes were saved during it but never sent:\n\nsource: "
+        .. notes
+        .. "\n\n## turn.md:3 ( )\nsaved, never sent\n",
+      text
+    )
+    eq(nil, vim.uv.fs_stat(dir), "mark directory removed")
+    text = exit_with_notes("202401010000") -- from an earlier review
+    truthy(text:find("no edits or suggestions", 1, true), text)
+  end)
 end)
 
 describe("read-latest.sh", function()
@@ -604,9 +641,35 @@ describe("read-latest.sh", function()
 
   it("prints nothing when nothing was saved", function()
     local repo = repo_with({ ["a.txt"] = "a\n" })
-    local res = run({ script }, { cwd = repo, env = { REVDIFF_HISTORY_DIR = vim.fn.tempname() } })
+    local env = { REVDIFF_HISTORY_DIR = vim.fn.tempname(), XDG_STATE_HOME = vim.fn.tempname() }
+    local res = run({ script }, { cwd = repo, env = env })
     eq(0, res.code)
     eq("", res.stdout)
+  end)
+
+  -- RIKER-0255: a last-turn review (open.sh --doc on a scratch .md outside any repo)
+  -- keeps its notes under Neovim's state dir; read-latest.sh used to miss them.
+  it("finds notes on a document reviewed outside any repo, under Neovim's state dir", function()
+    local repo = repo_with({ ["a.txt"] = "a\n" })
+    local state = vim.fn.tempname()
+    local docs = state .. "/nvim/annodiff/docs"
+    write(docs .. "/0123456789ab-grill-round.md/annotations.md", "## grill-round.md:3 ( )\nno need\n")
+    write(docs .. "/ba9876543210-empty.md/annotations.md", "") -- every note deleted: not a candidate
+    run({ "touch", "-t", "203001010000", docs .. "/ba9876543210-empty.md/annotations.md" })
+    local env = { REVDIFF_HISTORY_DIR = vim.fn.tempname(), XDG_STATE_HOME = state }
+    for _, cwd in ipairs({ repo, vim.fs.dirname(state) }) do -- the session's repo, or no repo at all
+      local res = run({ script }, { cwd = cwd, env = env })
+      eq("source: " .. docs .. "/0123456789ab-grill-round.md/annotations.md\n\n## grill-round.md:3 ( )\nno need\n", res.stdout, cwd)
+    end
+
+    -- newest wins against this repo's own export; $NVIM_APPNAME moves the state dir
+    run({ "touch", "-t", "202001010000", docs .. "/0123456789ab-grill-round.md/annotations.md" })
+    write(repo .. "/.git/annodiff/annotations.md", "## a.txt:1 (+)\nrepo note\n")
+    local res = run({ script }, { cwd = repo, env = env })
+    truthy(res.stdout:find("repo note", 1, true), res.stdout)
+    write(state .. "/other/annodiff/docs/x-n.md/annotations.md", "## n.md:1 ( )\nappname note\n")
+    res = run({ script }, { cwd = repo, env = vim.tbl_extend("force", env, { NVIM_APPNAME = "other" }) })
+    truthy(res.stdout:find("appname note", 1, true), res.stdout)
   end)
 end)
 

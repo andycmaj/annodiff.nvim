@@ -192,9 +192,12 @@ describe("close notice (send_on_close = always)", function()
       vim.cmd("AnnodiffClose")
     end)
   end
-  local function setup(on_close)
+  local function setup(on_close, keep_state)
     os.remove(calls)
     os.remove(out)
+    if not keep_state then
+      vim.fn.delete(repo .. "/.git/annodiff", "rf") -- no notes restored from an earlier test
+    end
     config.options.send_command = cmd
     config.options.send_on_close = on_close
   end
@@ -270,6 +273,81 @@ describe("close notice (send_on_close = always)", function()
     eq({ "close 1 23" }, runs())
     eq("## f.txt:2 (+)\nflushed\n", read(out))
     eq(nil, view.current(), "the review is finished")
+  end)
+
+  -- RIKER-0255: a note typed in the editor but not saved with <C-s> was dropped on close
+  it("a note still open in the editor is kept and sent when the review closes", function()
+    setup("always")
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccunsaved draft") -- typed, never saved
+    eq(0, s.store:count())
+    quiet(function()
+      vim.cmd("AnnodiffClose") -- typed in the editor, like :qa
+    end)
+    eq("## f.txt:2 (+)\nunsaved draft\n", read(out))
+    eq({ "close 1 " .. #read(out) }, runs())
+  end)
+
+  it("exiting Neovim with a draft open keeps it; an empty draft deletes nothing", function()
+    setup("always")
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccdraft on exit")
+    quiet(function()
+      vim.api.nvim_exec_autocmds("VimLeavePre", {})
+    end)
+    eq("## f.txt:2 (+)\ndraft on exit\n", read(out))
+    eq({ "close 1 " .. #read(out) }, runs())
+
+    -- reopen: the note is restored; clear it in the editor and close without saving
+    setup("always", true)
+    s = open()
+    eq(1, s.store:count())
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("gg\"_dG") -- the editor opens in normal mode on an existing note
+    eq("", vim.trim(table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "")), "editor emptied")
+    close()
+    eq(1, s.store:count(), "an empty draft is dropped, not taken as a delete")
+    eq("## f.txt:2 (+)\ndraft on exit\n", read(out), "the restored note is still there")
+  end)
+
+  it("a draft cancelled with <Esc> is not kept", function()
+    setup("always")
+    local s = open()
+    eq(0, s.store:count())
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccthrown away<Esc><Esc>")
+    close()
+    eq(0, s.store:count())
+    eq({ "close 0 0" }, runs())
+  end)
+
+  it("\\q inside the editor keeps the draft, sends it and quits", function()
+    setup(false)
+    local view = require("annodiff.view")
+    local quit_ran = false
+    view.quit_command = "lua _G.__annodiff_quit()"
+    _G.__annodiff_quit = function()
+      quit_ran = true
+      vim.api.nvim_exec_autocmds("VimLeavePre", {})
+    end
+    local s = open()
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\a")
+    press("ccfrom the editor<Esc>")
+    quiet(function()
+      press("\\q")
+    end)
+    truthy(quit_ran, "\\q in the editor quits")
+    eq("## f.txt:2 (+)\nfrom the editor\n", read(out))
+    eq({ "close 1 " .. #read(out) }, runs())
+    eq(nil, view.current())
+    view.quit_command = "confirm qall"
   end)
 
   it("\\q with nothing new and send_on_close off sends nothing; a cancelled quit keeps the review", function()

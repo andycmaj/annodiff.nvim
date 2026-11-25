@@ -981,6 +981,8 @@ function M.close(s, opts)
   if s.closing then
     return
   end
+  -- a note still open in the editor counts: keep it, so it is saved and sent
+  annotate.keep_draft()
   s.closing = true
   sessions[s.tab] = nil
   if s.on_close then
@@ -1029,7 +1031,9 @@ end
 
 --- Finish every open review (VimLeavePre).
 function M.close_all_leaving()
-  for _, s in pairs(vim.deepcopy(sessions, true)) do
+  -- a list of the sessions themselves (close() edits the table): a deep copy would
+  -- finish copies, missing anything kept into the real store on the way out (a draft)
+  for _, s in ipairs(vim.tbl_values(sessions)) do
     M.close(s, { leaving = true })
   end
 end

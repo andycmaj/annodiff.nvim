@@ -240,6 +240,16 @@ function M.save(s)
   if not ok then
     notify("could not save review state: " .. tostring(err), vim.log.levels.ERROR)
   end
+  -- A document outside any repo (an agent's message in a scratch dir): keep its export
+  -- current on every change, so read-latest.sh finds the notes even when no send or
+  -- close ever ran (Neovim killed, the paste to the agent lost). Each such document has
+  -- its own state dir, so this never clobbers another review's export.
+  if s.spec.state_dir then
+    ok, err = persist.write_atomic(M.default_path(s), s.store:format())
+    if not ok then
+      notify("could not write annotations: " .. tostring(err), vim.log.levels.ERROR)
+    end
+  end
 end
 
 --- Draw the open file's annotations and agent threads.
@@ -362,11 +372,25 @@ end
 
 -- Input -----------------------------------------------------------------------
 
+--- The open annotation editor, while one is open with keep_draft: what it would save.
+---@type {keep: fun()}?
+local pending_draft
+
+--- Save the open annotation editor's text, if there is any, as if <C-s> were pressed.
+--- Runs when a review closes or Neovim exits, so a note typed but not yet saved is not
+--- lost (and gets sent). An empty draft is dropped, never treated as "delete".
+function M.keep_draft()
+  if pending_draft then
+    pending_draft.keep()
+  end
+end
+
 --- Floating editor. on_done(text) gets the trimmed text, or nil on cancel.
 ---@param title string
 ---@param initial string
 ---@param on_done fun(text: string?)
-function M.input(title, initial, on_done)
+---@param opts? {keep_draft?: boolean} keep_draft: an annotation; M.keep_draft() and \q save it
+function M.input(title, initial, on_done, opts)
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
@@ -387,19 +411,44 @@ function M.input(title, initial, on_done)
   })
   vim.wo[win].wrap = true
   local done = false
-  local function finish(save)
+  local draft
+  local function text_now()
+    if not api.nvim_buf_is_valid(buf) then
+      return ""
+    end
+    return vim.trim(table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+  end
+  ---@param now? boolean call on_done right away (closing / exiting: no later tick)
+  local function finish(save, now)
     if done then
       return
     end
     done = true
-    local text = save and vim.trim(table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n")) or nil
+    if pending_draft == draft then
+      pending_draft = nil
+    end
+    local text = save and text_now() or nil
     if api.nvim_win_is_valid(win) then
       api.nvim_win_close(win, true)
     end
     vim.cmd("stopinsert")
-    vim.schedule(function()
+    if now then
       on_done(text)
-    end)
+    else
+      vim.schedule(function()
+        on_done(text)
+      end)
+    end
+  end
+  if opts and opts.keep_draft then
+    draft = {
+      keep = function()
+        if text_now() ~= "" then
+          finish(true, true)
+        end
+      end,
+    }
+    pending_draft = draft
   end
   local o = { buffer = buf, nowait = true, silent = true }
   vim.keymap.set({ "n", "i" }, "<C-s>", function()
@@ -414,6 +463,18 @@ function M.input(title, initial, on_done)
   vim.keymap.set("n", "<Esc>", function()
     finish(false)
   end, o)
+  if draft then
+    -- \q from inside the editor: keep the note, then send and quit as everywhere else
+    local quit = require("annodiff.config").options.keymaps.quit
+    if quit then
+      for _, lhs in ipairs(type(quit) == "table" and quit or { quit }) do
+        vim.keymap.set("n", lhs, function()
+          draft.keep()
+          require("annodiff.view").quit()
+        end, o)
+      end
+    end
+  end
   api.nvim_create_autocmd("WinLeave", {
     buffer = buf,
     once = true,
@@ -578,7 +639,7 @@ function M.edit(s, rec, hunk, existing)
     end
     s.store:add(rec)
     changed(s)
-  end)
+  end, { keep_draft = true })
 end
 
 --- File-level annotation (\A).
@@ -602,7 +663,7 @@ function M.annotate_file(s)
     end
     s.store:add({ file = e.path, line = 0, type = "", text = text })
     changed(s)
-  end)
+  end, { keep_draft = true })
 end
 
 --- Delete the annotation under the cursor (\d).

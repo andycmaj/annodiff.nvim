@@ -9,7 +9,8 @@
 #                             every close, so the agent always hears the review ended) or
 #                             exit (Neovim exited; open.sh runs this after nvim returns)
 #   ANNODIFF_ANNOTATION_COUNT annotations in the review, sent or not
-#   ANNODIFF_CLOSED_MARK      a file touched on close, so exit says nothing after a close
+#   ANNODIFF_CLOSED_MARK      a file touched on close, so exit says nothing after a close;
+#                             its directory's mtime is when the review opened
 #   ANNODIFF_REVIEW_LABEL     which review this is (a document's name, or the diff args),
 #                             named in every header so notes from two reviews never mix
 # close and exit also free this pane's review lock (review-lock.sh), so the agent can
@@ -41,14 +42,37 @@ case "$reason" in
     fi
     ;;
   exit)
+    # Neovim's TUI can return before its embedded server finishes closing the review
+    # (the TUI killed, the server still on its way out): give that close up to 2s.
+    if [ -n "$mark" ]; then
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        [ -e "$mark" ] && break
+        sleep 0.1
+      done
+    fi
     # a review already said it closed: nothing to add
     if [ -n "$mark" ] && [ -e "$mark" ]; then
       rm -f "$mark"
       rmdir "$(dirname "$mark")" 2>/dev/null
       exit 0
     fi
-    [ -n "$mark" ] && rmdir "$(dirname "$mark")" 2>/dev/null
-    header="annodiff exited ($src) without closing a review (it may have failed to open: no changes, a bad ref): no annotations, so no edits or suggestions. Nothing to change."
+    # No close ran (the review failed to open, or Neovim was killed). Notes saved before
+    # that are on disk: read-latest.sh finds them; count them only if written after the
+    # review opened (open.sh made the mark's directory then).
+    latest=""
+    if [ -n "$mark" ] && [ -d "$(dirname "$mark")" ]; then
+      latest="$("$dir/read-latest.sh" 2>/dev/null)"
+      saved="$(printf '%s\n' "$latest" | sed -n '1s/^source: //p')"
+      # not older than the open (-nt is whole seconds on macOS bash)
+      { [ -n "$saved" ] && ! [ "$(dirname "$mark")" -nt "$saved" ]; } || latest=""
+      rmdir "$(dirname "$mark")" 2>/dev/null
+    fi
+    if [ -n "$latest" ]; then
+      header="annodiff exited ($src) before the review closed (Neovim was killed?); these notes were saved during it but never sent:"
+      printf '%s\n' "$latest" > "$tmp"
+    else
+      header="annodiff exited ($src) without closing a review (it may have failed to open: no changes, a bad ref): no annotations, so no edits or suggestions. Nothing to change."
+    fi
     ;;
   *)
     [ -s "$tmp" ] || exit 0

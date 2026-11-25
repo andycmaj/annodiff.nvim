@@ -1,0 +1,93 @@
+# RIKER-0255 fixes, live (real tmux, real nvim, real open.sh/deliver.sh/read-latest.sh), rebased on origin/main 8702752.
+# 1) read-latest.sh (no --doc) finds last-turn (doc mode outside git) notes: docs/proof/read-latest-doc-mode-repro.sh
+
+== 1. Claude (pane %0, cwd = a git repo) opens its last turn in annodiff:
+$ open.sh --doc $SCRATCH/repro-scratch/grill-round.md
+opened annodiff (--doc $SCRATCH/repro-scratch/grill-round.md) in a new tmux window, in $SCRATCH/repro-scratch; notes will be sent to pane %0
+
+== 2. the Claude pane goes away (session restarted / pane moved), then the owner annotates line 3 and closes the review
+annodiff says:
+annodiff: send command failed (exit 1): can't find pane: %0
+annodiff: 1 annotation(s) saved to /private/tmp/claude-501/-Users-ac-workspace-andycmaj-annodiff-nvim-bug-closing-annodiff-with-no-edits-shoul/0543392f-c8f5-406
+
+== 3. the notes are on disk, in annodiff's state folder:
+$SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/annotations.md
+$SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/review.json
+--- annotations.md:
+## grill-round.md:3 ( )
+no need. commands are fine here
+
+== 4. owner: "use my latest annodiff annotations" -> skill runs read-latest.sh
+-- from the Claude session's cwd (a git repo):
+stdout: [source: $SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/annotations.md
+
+## grill-round.md:3 ( )
+no need. commands are fine here]
+-- from the scratch dir itself:
+stdout: [source: $SCRATCH/repro-state/nvim/annodiff/docs/4ae1a70af085-grill-round.md/annotations.md
+
+## grill-round.md:3 ( )
+no need. commands are fine here]
+-- revdiff history dir (no entry: history is off outside a repo):
+(does not exist)
+
+Result: see stdout above (empty = read-latest.sh missed the notes).
+
+# 2) note typed in the float but not saved (<C-s>), then :qa or \q: kept and sent (docs/proof/riker-0255-draft.sh)
+
+## close via: draft-then-qa
+----- claude pane -----
+annodiff annotations (from /annodiff nvim, review: last-answer.md; the review is closed, this is the final set):
+## last-answer.md:3 ( )
+reply note
+-----------------------
+
+## close via: draft-then-backslash-q
+----- claude pane -----
+annodiff annotations (from /annodiff nvim, review: last-answer.md; the review is closed, this is the final set):
+## last-answer.md:3 ( )
+reply note
+-----------------------
+
+# 3) Neovim killed after a note was saved, no send (docs/proof/riker-0255-kill.sh): TUI only (its server closes the review) / whole tree (exit notice carries the notes)
+=== tui
+kill -9 the nvim TUI only (pid 69874; its --embed server 69875 is left to exit)
+claude pane got: [annodiff annotations (from /annodiff nvim, review: turn.md; the review is closed, this is the final set):
+## turn.md:3 ( )
+saved, never sent]
+read-latest.sh:
+source: $SCRATCH/kill-state/nvim/annodiff/docs/ef2a823da979-turn.md/annotations.md
+
+## turn.md:3 ( )
+saved, never sent
+=== all
+kill -9 the nvim TUI and its --embed server (pids 70132 70134): no close can run
+claude pane got: [annodiff exited (from /annodiff nvim, review: turn.md) before the review closed (Neovim was killed?); these notes were saved during it but never sent:
+source: /private/tmp/claude-501/-Users-ac-workspace-andycmaj-annodiff-nvim-bug-closing-annodiff-with-no-edits-shoul/0543392f-c8f5-406d-bb4d-246c5703b69a/scratch
+pad/kill-state/nvim/annodiff/docs/ef2a823da979-turn.md/annotations.md
+## turn.md:3 ( )
+saved, never sent]
+read-latest.sh:
+source: $SCRATCH/kill-state/nvim/annodiff/docs/ef2a823da979-turn.md/annotations.md
+
+## turn.md:3 ( )
+saved, never sent
+
+# Red before the fix: these tests on 4b789e2 (inline-layout failures there cascade from the failing doc tests leaving a review open)
+  FAIL read-latest.sh > finds notes on a document reviewed outside any repo, under Neovim's state dir
+  FAIL :Annodiff --doc on a file outside any git repo (an agent's message) > keeps the export current on every change, before any send or close (RIKER-0255)
+  FAIL :Annodiff --doc on a file outside any git repo (an agent's message) > closing writes no revdiff history entry, and reopening restores the note
+  FAIL inline layout > one diff window, the real file, no diff mode
+  FAIL inline layout > removed lines are ghost rows above where they were; added lines highlighted
+  FAIL inline layout > \a on a plain added line annotates it directly
+  FAIL inline layout > \a on a line with ghost rows offers the removed lines
+  FAIL inline layout > \d on that line picks among the notes there
+  FAIL inline layout > removed block at the end: picker covers it; export uses old numbers
+  FAIL inline layout > edits in the real file move the ghost rows
+  FAIL inline layout > a deleted file shows its old content, all removed; \a annotates old lines
+  FAIL inline layout > \i switches to split and back, keeping notes
+  FAIL inline layout > \c on a ghost line asks about the removed line
+  FAIL close notice (send_on_close = always) > a note still open in the editor is kept and sent when the review closes
+  FAIL close notice (send_on_close = always) > exiting Neovim with a draft open keeps it; an empty draft deletes nothing
+  FAIL close notice (send_on_close = always) > \q inside the editor keeps the draft, sends it and quits
+198 passed, 17 failed

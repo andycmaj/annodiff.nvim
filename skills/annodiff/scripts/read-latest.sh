@@ -12,6 +12,9 @@
 #     in $REVDIFF_HISTORY_DIR (default ~/.config/revdiff/history)/<repo basename>/,
 #     matched on their path: header, as revdiff's read-latest-history.sh does.
 #   <state dir>/annotations.md          --doc on a file outside a git repo (no history there)
+#   (no --doc) documents reviewed outside any repo (one of Claude's messages in a scratch dir, via
+#     open.sh --doc): Neovim's stdpath("state")/annodiff/docs/<hash>-<name>/annotations.md,
+#     kept current on every change. They belong to no checkout, so any of them counts.
 # Prints "source: <path>" then the file. Prints nothing (exit 0) when there is none.
 set -uo pipefail
 
@@ -64,6 +67,16 @@ else
   hash="$(printf '%s' "$doc" | sha256 | cut -c1-12)"
   f="$state/annodiff/docs/$hash-$(basename "$doc")/annotations.md"
   [ -s "$f" ] && latest="$f"
+fi
+
+# No --doc: also any document reviewed outside a repo (one of Claude's messages), whose
+# path the asker may not know. Neovim's stdpath("state"), as above.
+if [ -z "$doc" ]; then
+  docs="${XDG_STATE_HOME:-${HOME:-}/.local/state}/${NVIM_APPNAME:-nvim}/annodiff/docs"
+  for f in "$docs"/*/annotations.md; do
+    [ -s "$f" ] || continue
+    newer "$f" && latest="$f"
+  done
 fi
 
 if [ -n "$latest" ]; then

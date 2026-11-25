@@ -147,7 +147,8 @@ until you edit.
 
 The file does not have to be in a git repository. Outside one, the file's directory is
 the review's root, a ref is refused, the state and export live under Neovim's state dir
-(`stdpath("state")/annodiff/docs/`), and no revdiff history entry is written. That is how
+(`stdpath("state")/annodiff/docs/`), the export there is rewritten on every change (so the
+notes survive even when no send or close runs), and no revdiff history entry is written. That is how
 `/annodiff` annotates one of Claude's own messages: it writes the message to a scratch
 `.md` file and opens it with `--doc`.
 
@@ -217,7 +218,8 @@ annotation, and an agent's answer to `\c` streamed in under the block.*
 | `<localleader>i` | everywhere | toggle split / inline layout |
 
 In the annotation float: `<C-s>` (or `<CR>` in normal mode) saves, `q` / `<Esc>`
-in normal mode cancels.
+in normal mode cancels. A note still open in the float when the review closes or Neovim
+exits (`:qa`, `\q`) is saved, not lost; an empty one is dropped, never taken as a delete.
 
 ## Annotations
 
@@ -349,13 +351,17 @@ Closing the review always tells Claude, notes or not: unsent notes arrive as the
 set, and a review closed with nothing to say arrives as `annodiff review closed ...: no
 annotations, so no edits or suggestions`, so Claude carries on instead of waiting. If
 Neovim quits before any review closed (it failed to open: no changes, a bad ref),
-Claude gets `annodiff exited ... without closing a review`. Every message names its
+Claude gets `annodiff exited ... without closing a review`; if Neovim was killed after
+notes were saved, that message carries them. Every message names its
 review (`from /annodiff nvim, review: plan.md` or `review: --base main`).
 
 One review at a time per Claude session: while one is open, a second `/annodiff` from
 the same session is refused (`error: a review opened from this pane is still open`), so
 nothing opens over a review you are still in. Its close message frees the session for
 the next one.
+
+"Use my latest annodiff annotations" (`read-latest.sh`) also finds notes on documents
+reviewed outside any repo (Claude's own messages, under Neovim's state dir).
 
 With no args Claude asks which diff to review, offering only what applies:
 
