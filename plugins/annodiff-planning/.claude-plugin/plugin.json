@@ -1,6 +1,6 @@
 {
   "name": "annodiff-planning",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Review Claude's plans in Neovim (annodiff.nvim) before they run; annotations go back as plan feedback",
   "author": {
     "name": "andycmaj"
