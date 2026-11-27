@@ -1,0 +1,73 @@
+
+=== 1. open: a popup over the Claude pane
+opened annodiff (--doc $SCRATCH/p285/step1.md) in a tmux popup over this pane (a new window if a popup is already up there), in $SCRATCH/p285; notes will be sent to pane %0
+windows in the claude session: 1 (1 = no new window)
+lock: review=[step1.md] holder=[pid:N]
+client screen (top 6 lines):
+
+         ┌─ annodiff: step1.md ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+         │ [No Name]  2 step1.md                                                                                                                                                           X│
+         │step1.md                           │# Plan 1                                                                                                                                      │
+         │1 heading                          │                                                                                                                                              │
+         │Plan 1                             │Step one.                                                                                                                                     │
+
+=== 2. a second open while the popup is up is refused
+error: a review opened from this pane is still open (step1.md, in a tmux popup): wait for its close message (the user sends notes and closes it, or \q sends and quits), then open this one
+exit 1
+
+=== 3. a note, then \q (send and quit): notes reach the agent, lock freed
+annodiff annotations (from /annodiff nvim, review: step1.md; the review is closed, this is the final set):
+
+## step1.md:3 ( )
+first note
+
+lock after: []; popup gone: yes
+
+=== 4. a note, then :qa
+annodiff annotations (from /annodiff nvim, review: step4.md; the review is closed, this is the final set):
+
+## step4.md:3 ( )
+second note
+
+lock after: []
+
+=== 5. a note, then the popup killed (display-popup -C)
+annodiff annotations (from /annodiff nvim, review: step5.md; the review is closed, this is the final set):
+
+## step5.md:3 ( )
+third note
+
+lock after: []
+
+=== 5b. a note saved, then Neovim SIGKILLed (TUI and server): no close can run; the popup job reports the exit
+annodiff exited (from /annodiff nvim, review: step9.md) without closing a review (it may have failed to open: no changes, a bad ref): no annotations, so no edits or suggestions. Nothing to change.
+
+lock after: []
+
+=== 5c. review closed with :AnnodiffClose but Neovim left up in its popup: the next review opens in a window (a client shows one popup)
+annodiff review closed (from /annodiff nvim, review: step11.md): no annotations, so no edits or suggestions. The review is done; nothing to change.
+
+lock after the close: []; first popup still up: yes
+opened annodiff (--doc $SCRATCH/p285/step10.md) in a tmux popup over this pane (a new window if a popup is already up there), in $SCRATCH/p285; notes will be sent to pane %0
+windows: tmux annodiff 
+lock: review=[step10.md] holder=[%N]
+annodiff review closed (from /annodiff nvim, review: step10.md): no annotations, so no edits or suggestions. The review is done; nothing to change.
+
+after quitting the first popup's Neovim, pasted: []
+
+=== 6. ANNODIFF_POPUP=0: a new window, as before
+opened annodiff (--doc $SCRATCH/p285/step6.md) in a new tmux window, in $SCRATCH/p285; notes will be sent to pane %0
+windows: tmux annodiff 
+
+=== 7. a note, then the client detaches (the popup goes with it)
+annodiff annotations (from /annodiff nvim, review: step7.md; the review is closed, this is the final set):
+
+## step7.md:3 ( )
+fourth note
+
+lock after: []
+
+=== 8. no client looking at the Claude pane's window: a new window
+clients: other (looking at 'other', not the Claude pane's window)
+opened annodiff (--doc $SCRATCH/p285/step8.md) in a new tmux window, in $SCRATCH/p285; notes will be sent to pane %0
+windows: tmux other annodiff 

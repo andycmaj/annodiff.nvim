@@ -92,9 +92,13 @@ describe("open.sh", function()
     bin .. "/tmux",
     ([[#!/bin/sh
 if [ "$1" = display-message ]; then
-  case "$*" in *riker_tools*) printf '%%s\n' "${STUB_TOOLS:-}" ;; *) echo ;; esac
+  case "$*" in *riker_tools*) printf '%%s\n' "${STUB_TOOLS:-}" ;; *window_id*) echo @1 ;; *) echo ;; esac
   exit 0
 fi
+# a popup needs tmux 3.3+ and a client looking at the pane's window (@1): $STUB_TMUX_VERSION
+# and $STUB_CLIENTS (list-clients lines) say whether there is one
+[ "$1" = -V ] && { echo "tmux ${STUB_TMUX_VERSION:-}"; exit 0; }
+[ "$1" = list-clients ] && { printf '%%s' "${STUB_CLIENTS:-}"; exit 0; }
 # the review lock (pane options): nothing held; real tmux covers it below
 case "$1" in show-options | set-option) exit 0 ;; esac
 printf '%%s\n' "$*" >> %s
@@ -259,6 +263,56 @@ printf '%s\n' "$STUB_GH_PR"
     local t = (read(tools_log) or ""):gsub("\\(.)", "%1")
     truthy(t:find("^pane %-%-zoom %-%-cwd"), t)
     truthy(t:find("Annodiff HEAD", 1, true), t)
+  end)
+
+  -- the popup's job script, from the run-shell call: `<bash> <job> >/dev/null 2>&1`
+  local function popup_job(calls)
+    local job = calls:match("run%-shell %-b %-t %%99 %S+ (%S+) >/dev/null")
+    return job and read(job), job
+  end
+  local looking = "100\t0\t@2\t/dev/ttys001\n300\t0\t@1\t/dev/ttys002\n200\t0\t@1\t/dev/ttys003\n"
+
+  it("in tmux 3.3+ opens a popup over this pane, on the client looking at it", function()
+    local repo = repo_with({ ["a.txt"] = "a\n" })
+    local res, calls = open_in(repo, { "HEAD" }, { STUB_TMUX_VERSION = "3.3a", STUB_CLIENTS = looking })
+    eq(0, res.code, res.stderr)
+    truthy(res.stdout:find("in a tmux popup over this pane", 1, true), res.stdout)
+    eq(nil, calls:find("new-window", 1, true), calls)
+    local job, path = popup_job(calls)
+    truthy(job, calls)
+    -- the most recently active client of the two looking at @1; default size 90%
+    truthy(job:find(vim.pesc("display-popup -E -c /dev/ttys002 -w 90% -h 90% -d ") .. "%S*" .. vim.pesc(vim.fs.basename(repo)) .. " "), job)
+    truthy(job:find("-T \\ annodiff:\\ HEAD\\ ", 1, true), job)
+    truthy(job:find("Annodiff[\\ ]+HEAD"), job) -- quoted twice: for the job's shell, then sh -c
+    -- the job holds the lock, tells the popup, and reports the exit after it closes
+    truthy(job:find("export ANNODIFF_REVIEW_OWNER=pid:$$", 1, true), job)
+    truthy(job:find("-e ANNODIFF_REVIEW_OWNER=$ANNODIFF_REVIEW_OWNER", 1, true), job)
+    truthy(job:find("review-lock.sh attach", 1, true), job)
+    truthy(job:find("ANNODIFF_SEND_REASON=exit [^\n]*deliver.sh %%99"), job)
+    truthy(job:find("rm -f " .. path, 1, true), "the job removes itself")
+    os.remove(path)
+  end)
+
+  it("popup size is configurable; ANNODIFF_POPUP=0, an old tmux or no client looking opens a window", function()
+    local repo = repo_with({ ["a.txt"] = "a\n" })
+    local base = { STUB_TMUX_VERSION = "3.8", STUB_CLIENTS = looking }
+    local _, calls = open_in(repo, { "HEAD" }, vim.tbl_extend("force", base, { ANNODIFF_POPUP_WIDTH = "70%", ANNODIFF_POPUP_HEIGHT = "40" }))
+    local job, path = popup_job(calls)
+    truthy(job and job:find("-w 70% -h 40 ", 1, true), job or calls)
+    os.remove(path)
+    for _, extra in ipairs({
+      { ANNODIFF_POPUP = "0" },
+      { ANNODIFF_POPUP = "off" },
+      { STUB_TMUX_VERSION = "3.2a" },
+      { STUB_CLIENTS = "100\t0\t@2\t/dev/ttys001\n" }, -- looking elsewhere
+      { STUB_CLIENTS = "100\t1\t@1\t/dev/ttys001\n" }, -- control mode: cannot draw a popup
+    }) do
+      local res
+      res, calls = open_in(repo, { "HEAD" }, vim.tbl_extend("force", base, extra))
+      eq(0, res.code, res.stderr)
+      truthy(calls:find("new-window -n annodiff", 1, true), vim.inspect(extra) .. "\n" .. calls)
+      eq(nil, calls:find("run-shell", 1, true), vim.inspect(extra))
+    end
   end)
 
   it("a user override in $CLAUDE_PLUGIN_DATA replaces the bundled launcher", function()
@@ -426,6 +480,138 @@ done
     eq("", option("@annodiff_review"), "check clears a stale lock")
   end)
 
+  T({ "kill-server" })
+end)
+
+-- The popup, on a real (private) tmux server with a real client: a second server's pane
+-- runs `tmux attach` to the first, since a popup draws only on an attached client. A popup
+-- is no pane, so the stand-in Neovim takes its orders by review label instead.
+describe("popup over the Claude pane (real tmux)", function()
+  local major, minor = (vim.fn.executable("tmux") == 1 and vim.fn.system({ "tmux", "-V" }) or ""):match("(%d+)%.(%d+)")
+  if not major or tonumber(major) < 3 or (tonumber(major) == 3 and tonumber(minor) < 3) then
+    it("skipped: no tmux 3.3+", function() end)
+    return
+  end
+  local open = root .. "/skills/annodiff/scripts/open.sh"
+  local tmp = vim.fn.resolve(vim.fn.tempname())
+  local bin, ctl, docs = tmp .. "/bin", tmp .. "/ctl", tmp .. "/docs"
+  local pasted = tmp .. "/claude.txt"
+  vim.fn.mkdir(ctl, "p")
+  write(docs .. "/a.md", "# A\n")
+  write(docs .. "/b.md", "# B\n")
+  write(docs .. "/c.md", "# C\n")
+  -- "close" runs the send command as a review close does and stays up, as Neovim does
+  write(
+    bin .. "/nvim",
+    ([[#!/bin/sh
+f=%s/"$ANNODIFF_REVIEW_LABEL"
+echo "review $ANNODIFF_REVIEW_LABEL up"
+while :; do
+  if [ -e "$f" ]; then
+    order="$(cat "$f")"; rm -f "$f"
+    case "$order" in
+      close) ANNODIFF_SEND_REASON=close ANNODIFF_ANNOTATION_COUNT=0 sh -c "$ANNODIFF_SEND_COMMAND" </dev/null ;;
+      quit) exit 0 ;;
+    esac
+  fi
+  sleep 0.05
+done
+]]):format(ctl),
+    "755"
+  )
+  local sock, view_sock = "annodiff-popup-" .. vim.fn.getpid(), "annodiff-view-" .. vim.fn.getpid()
+  local server_env = { PATH = bin .. ":" .. vim.env.PATH, TMUX = "", TMUX_PANE = "" }
+  local function T(args, s)
+    return run(vim.list_extend({ "tmux", "-L", s or sock }, args), { env = server_env })
+  end
+  local started = T({
+    "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "160", "-y", "40",
+    "stty -echo; exec cat > " .. vim.fn.shellescape(pasted),
+  })
+  assert(started.code == 0, started.stderr)
+  T({ "-f", "/dev/null", "new-session", "-d", "-s", "v", "-x", "160", "-y", "40", "env -u TMUX tmux -L " .. sock .. " attach -t t" }, view_sock)
+  vim.wait(3000, function()
+    return vim.trim(T({ "list-clients", "-F", "#{client_name}" }).stdout) ~= ""
+  end, 20)
+  local claude = vim.trim(T({ "display-message", "-p", "-t", "t:0", "#{pane_id}" }).stdout)
+  local socket_path = vim.trim(T({ "display-message", "-p", "#{socket_path}" }).stdout)
+  local env = { PATH = server_env.PATH, TMUX = socket_path .. ",0,0", TMUX_PANE = claude, CLAUDE_PLUGIN_DATA = "" }
+  local function option(name)
+    return vim.trim(T({ "show-options", "-pqv", "-t", claude, name }).stdout)
+  end
+  local function screen_has(text)
+    return vim.wait(5000, function()
+      return T({ "capture-pane", "-p", "-t", "v" }, view_sock).stdout:find(text, 1, true) ~= nil
+    end, 20)
+  end
+  local function claude_saw(text)
+    vim.wait(5000, function()
+      return (read(pasted) or ""):find(text, 1, true) ~= nil
+    end, 20)
+    return read(pasted) or ""
+  end
+
+  it("opens over the pane, holds the lock, and every way out reaches the agent", function()
+    local res = run({ open, "--doc", docs .. "/a.md" }, { env = env })
+    eq(0, res.code, res.stderr)
+    truthy(res.stdout:find("in a tmux popup over this pane", 1, true), res.stdout)
+    truthy(screen_has("annodiff: a.md"), "the popup's title on the client")
+    truthy(screen_has("review a.md up"), "Neovim runs in the popup")
+    eq(1, #vim.split(vim.trim(T({ "list-windows", "-t", "t" }).stdout), "\n"), "no new window")
+    eq("a.md", option("@annodiff_review"))
+    truthy(option("@annodiff_review_pane"):find("^pid:%d+$"), option("@annodiff_review_pane"))
+
+    res = run({ open, "--doc", docs .. "/b.md" }, { env = env })
+    eq(1, res.code)
+    truthy(res.stderr:find("(a.md, in a tmux popup)", 1, true), res.stderr)
+
+    -- a close inside the popup frees the lock, though its Neovim stays up
+    write(ctl .. "/a.md", "close")
+    local seen = claude_saw("review closed (from /annodiff nvim, review: a.md)")
+    truthy(seen:find("annodiff review closed (from /annodiff nvim, review: a.md): no annotations", 1, true), seen)
+    vim.wait(3000, function()
+      return option("@annodiff_review") == ""
+    end, 20)
+    eq("", option("@annodiff_review"))
+
+    -- a's popup still holds the client, which shows one popup at a time: b opens in a window
+    res = run({ open, "--doc", docs .. "/b.md" }, { env = env })
+    eq(0, res.code, res.stderr)
+    vim.wait(5000, function()
+      return T({ "list-windows", "-t", "t", "-F", "#{window_name}" }).stdout:find("annodiff", 1, true) ~= nil
+    end, 20)
+    local b = vim.trim(T({ "display-message", "-p", "-t", "t:annodiff", "#{pane_id}" }).stdout)
+    truthy(b:find("^%%%d+$"), "b's window")
+    vim.wait(3000, function()
+      return option("@annodiff_review_pane") == b
+    end, 20)
+    eq(b, option("@annodiff_review_pane"), "b's window holds the lock")
+    write(ctl .. "/b.md", "quit")
+    seen = claude_saw("annodiff exited (from /annodiff nvim, review: b.md)")
+    truthy(seen:find("annodiff exited (from /annodiff nvim, review: b.md) without closing a review", 1, true), seen)
+
+    -- a's Neovim quits: its close was reported already, so the job adds nothing
+    write(ctl .. "/a.md", "quit")
+    vim.wait(3000, function()
+      return not T({ "capture-pane", "-p", "-t", "v" }, view_sock).stdout:find("review a.md up", 1, true)
+    end, 20)
+
+    -- Neovim gone with no close (killed): the job reports the exit and frees the lock
+    res = run({ open, "--doc", docs .. "/c.md" }, { env = env })
+    eq(0, res.code, res.stderr)
+    truthy(screen_has("review c.md up"), "c's popup, the client free again")
+    eq("c.md", option("@annodiff_review"))
+    write(ctl .. "/c.md", "quit")
+    seen = claude_saw("annodiff exited (from /annodiff nvim, review: c.md)")
+    truthy(seen:find("annodiff exited (from /annodiff nvim, review: c.md) without closing a review", 1, true), seen)
+    eq(1, select(2, seen:gsub("review: a.md", "")), "a's close was reported once, with no exit report after it")
+    vim.wait(3000, function()
+      return option("@annodiff_review") == ""
+    end, 20)
+    eq("", option("@annodiff_review"))
+  end)
+
+  T({ "kill-server" }, view_sock)
   T({ "kill-server" })
 end)
 

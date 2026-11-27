@@ -354,8 +354,15 @@ From a checkout: `claude --plugin-dir /path/to/annodiff.nvim` (and
 
 ### `/annodiff` (review skill)
 
-`/annodiff:annodiff [annodiff args]` opens `:Annodiff` beside the Claude pane (a zoomed
-split in a Riker task window, otherwise a new tmux window) and returns at once. Notes you
+`/annodiff:annodiff [annodiff args]` opens `:Annodiff` over or beside the Claude pane and
+returns at once: in a Riker task window, a zoomed split; otherwise a tmux popup over the
+Claude pane (as revdiff opens), so the session stays in view behind it. The popup needs
+tmux 3.3+ and an attached client looking at the Claude pane's window; without one, or
+with `ANNODIFF_POPUP=0` in Claude's environment, or while an earlier review's Neovim is
+still up in a popup (a client shows one popup at a time), it opens in a new tmux window
+instead. `ANNODIFF_POPUP_WIDTH` / `ANNODIFF_POPUP_HEIGHT` size the popup (tmux sizes,
+default `90%`). Every way out of the popup (`\q`, `:qa`, the popup or Neovim killed, the
+client detached) reaches Claude as below. Notes you
 send with `\s` (or `O` in the tree, or by closing the review) are pasted into the Claude
 session; Claude answers questions (`??`, explain/what/how/why) and makes the rest as
 changes, which you see live on the worktree side. `\q` sends what is unsent and quits

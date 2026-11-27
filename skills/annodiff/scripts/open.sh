@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Open :Annodiff in Neovim beside the calling Claude pane. Notes sent with \s (or O in
-# the tree), and any unsent notes on close, are pasted back into that pane; every close
+# Open :Annodiff in Neovim over or beside the calling Claude pane: a zoomed split in a Riker
+# task window, else a tmux popup over this pane (as revdiff opens), else a new tmux window.
+# env: ANNODIFF_POPUP=0 never opens a popup (a new window instead);
+#      ANNODIFF_POPUP_WIDTH / ANNODIFF_POPUP_HEIGHT size it (tmux sizes: 90% default, or cells).
+# Notes sent with \s (or O in the tree), and any unsent notes on close, are pasted back
+# into that pane; every close
 # (and a Neovim exit with no review closed) pastes a line saying so, notes or not.
 # One review at a time per Claude pane: a second open.sh is refused until the first closes.
 # usage: open.sh [annodiff args...]
@@ -25,7 +29,7 @@ command -v nvim >/dev/null 2>&1 || { echo "error: nvim not found in PATH" >&2; e
 # anything is asked or opened (review-lock.sh; a close or Neovim exit frees it).
 if ! busy="$("$dir/review-lock.sh" check "$TMUX_PANE")"; then
   label="${busy%%$'\t'*}" where="${busy#*$'\t'}"
-  [ "$where" = starting ] && where="still starting" || where="pane $where"
+  case "$where" in starting) where="still starting" ;; pid:*) where="in a tmux popup" ;; *) where="pane $where" ;; esac
   echo "error: a review opened from this pane is still open ($label, $where): wait for its close message (the user sends notes and closes it, or \\q sends and quits), then open this one" >&2
   exit 1
 fi
@@ -169,6 +173,55 @@ tools="$(tmux display-message -p -t "$TMUX_PANE" '#{@riker_tools}' 2>/dev/null |
 if [ -n "$tools" ]; then
   eval "$tools pane --zoom --cwd $(printf '%q' "$root") -- sh -c $(printf '%q' "$cmd")" >/dev/null
   echo "opened annodiff (${args[*]}) in a zoomed split of this pane, in $root; notes will be sent to pane $TMUX_PANE"
+  exit 0
+fi
+
+# Plain tmux: a popup over this pane, so this Claude session stays in view behind the
+# review. It shows on the client looking at this pane's window (the most recently active
+# one when several are), never on a client elsewhere; with none, a tmux older than 3.3,
+# or ANNODIFF_POPUP=0, a new window as before.
+popup_client() {
+  case "${ANNODIFF_POPUP:-1}" in 0 | false | no | off) return 1 ;; esac
+  [[ "$(tmux -V 2>/dev/null)" =~ ([0-9]+)\.([0-9]+) ]] || return 1
+  [ "${BASH_REMATCH[1]}" -gt 3 ] || { [ "${BASH_REMATCH[1]}" -eq 3 ] && [ "${BASH_REMATCH[2]}" -ge 3 ]; } || return 1
+  local win
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" && [ -n "$win" ] || return 1
+  # control-mode clients (iTerm2 -CC) cannot draw a popup
+  tmux list-clients -F '#{client_activity}	#{client_control_mode}	#{window_id}	#{client_name}' 2>/dev/null \
+    | sort -rn | awk -F '\t' -v w="$win" '$2 != 1 && $3 == w { print $4; found = 1; exit } END { exit !found }'
+}
+if client="$(popup_client)"; then
+  # A popup blocks whoever opens it until it closes, so a tmux job opens it, not this
+  # script: the agent gets its answer now, and the job outlives this shell. When the popup
+  # closes (any way: \q, :qa, killed) the job reports the exit as the window's shell does,
+  # after Neovim. The job's shell holds the review lock for the popup (a popup is no
+  # pane); the review inside learns it through -e, so its close frees the lock.
+  # A client shows one popup at a time and tmux drops a second one without a word: when an
+  # earlier review's Neovim is still up in one (its review closed, so the lock is free),
+  # the popup never runs and this review opens in a new window, as without a popup.
+  # The job is a script file because run-shell expands #{formats} in its command.
+  q() { printf '%q' "$1"; }
+  job="$(mktemp "${TMPDIR:-/tmp}/annodiff-popup.XXXXXX")"
+  started="$(dirname "$mark")/started"
+  inner="export ANNODIFF_CLOSED_MARK=$(q "$mark") ANNODIFF_REVIEW_LABEL=$(q "$label"); : > $(q "$started"); exec env $env_prefix nvim -c $(q "$vimcmd")"
+  {
+    echo "rm -f $(q "$job")"
+    echo "export ANNODIFF_REVIEW_OWNER=pid:\$\$ ANNODIFF_CLOSED_MARK=$(q "$mark") ANNODIFF_REVIEW_LABEL=$(q "$label")"
+    echo "$attach"
+    echo "$(q "$(command -v tmux)") display-popup -E -c $(q "$client") -w $(q "${ANNODIFF_POPUP_WIDTH:-90%}")" \
+      "-h $(q "${ANNODIFF_POPUP_HEIGHT:-90%}") -d $(q "$root") -T $(q " annodiff: ${label//#/##} ")" \
+      "-e ANNODIFF_REVIEW_OWNER=\$ANNODIFF_REVIEW_OWNER -- sh -c $(q "$inner")"
+    echo "if [ -e $(q "$started") ]; then"
+    echo "  rm -f $(q "$started")"
+    echo "  ANNODIFF_SEND_REASON=exit $deliver </dev/null"
+    echo "else"
+    echo "  $(q "$(command -v tmux)") new-window -n annodiff -c $(q "$root") $(q "$cmd")"
+    echo "fi"
+    echo "exit 0"
+  } > "$job"
+  # quiet: run-shell shows a job's output (or a failure) over the pane it targets
+  tmux run-shell -b -t "$TMUX_PANE" "$(q "$BASH" | sed 's/#/##/g') $(q "$job" | sed 's/#/##/g') >/dev/null 2>&1"
+  echo "opened annodiff (${args[*]}) in a tmux popup over this pane (a new window if a popup is already up there), in $root; notes will be sent to pane $TMUX_PANE"
   exit 0
 fi
 tmux new-window -n annodiff -c "$root" "$cmd"
