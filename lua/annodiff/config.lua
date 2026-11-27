@@ -47,6 +47,7 @@ M.defaults = {
     model = nil,
     args = {}, -- extra CLI arguments, appended last
     system_prompt = nil, -- replaces the default answer guidance
+    auto_show = true, -- open the thread window when its answer arrives (waits while you type)
   },
   keymaps = {
     next_file = "<Tab>",

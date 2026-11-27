@@ -38,6 +38,7 @@ function M.init(s)
   s.threads = threads_mod.new()
   s.jobs = {}
   s.job_seq = {}
+  s.answers_waiting = {} -- thread ids whose answer arrived while it was unsafe to show
 end
 
 local function agent_cfg()
@@ -242,6 +243,9 @@ local function start(s, t, question, follow_up)
       schedule_render(s)
     end
     M.update_overlay(s, t)
+    if ev.kind == "done" or (ev.kind == "failed" and ev.text ~= "canceled") then
+      M.answer_arrived(s, t)
+    end
   end)
   if not job then
     s.threads:apply(t.id, { kind = "failed", text = err })
@@ -524,6 +528,91 @@ local function thread_markdown(t)
   return out
 end
 
+-- Auto-show -------------------------------------------------------------------
+
+--- Whether an arriving answer may open its thread window now: Neovim idle in
+--- normal mode, in one of this review's windows, no float (question input,
+--- another thread) in the way.
+---@param s annodiff.Session
+function M.safe_to_show(s)
+  if s.closing or (s.overlay and api.nvim_win_is_valid(s.overlay.win)) then
+    return false
+  end
+  local mode = api.nvim_get_mode()
+  if mode.mode ~= "n" or mode.blocking or vim.fn.getcmdwintype() ~= "" then
+    return false
+  end
+  if s.tab and api.nvim_get_current_tabpage() ~= s.tab then
+    return false
+  end
+  local win = api.nvim_get_current_win()
+  if api.nvim_win_get_config(win).relative ~= "" then
+    return false
+  end
+  return win == s.win_tree or annotate.side_of(s, win) ~= nil
+end
+
+local function ask_key_for(t)
+  local k = config.options.keymaps[t.line == 0 and "ask_file" or "ask"]
+  k = type(k) == "table" and k[1] or k
+  return type(k) == "string" and k:gsub("<localleader>", vim.g.maplocalleader or "\\") or nil
+end
+
+--- Open the first waiting answer if it is safe now.
+---@param s annodiff.Session
+function M.show_waiting(s)
+  local q = s.answers_waiting
+  if not q or #q == 0 or not M.safe_to_show(s) then
+    return
+  end
+  while #q > 0 do
+    local t = s.threads:by(table.remove(q, 1))
+    if t and t.status ~= "streaming" then
+      return M.open_thread(s, t)
+    end
+  end
+end
+
+local function watch_waiting(s)
+  if s.waiting_autocmd or not s.augroup then
+    return
+  end
+  s.waiting_autocmd = api.nvim_create_autocmd({ "ModeChanged", "WinEnter", "CursorHold" }, {
+    group = s.augroup,
+    callback = function()
+      vim.schedule(function()
+        M.show_waiting(s)
+      end)
+    end,
+  })
+end
+
+--- An answer (or an error) came in: open its thread window when it is safe,
+--- else say so and open it once the owner is back in the review in normal
+--- mode. agent.auto_show = false turns this off.
+---@param s annodiff.Session
+---@param t annodiff.Thread
+function M.answer_arrived(s, t)
+  if agent_cfg().auto_show == false or s.closing then
+    return
+  end
+  if s.overlay and s.overlay.thread == t.id and api.nvim_win_is_valid(s.overlay.win) then
+    return -- already open, update_overlay filled it in
+  end
+  if M.safe_to_show(s) then
+    return M.open_thread(s, t)
+  end
+  if not vim.tbl_contains(s.answers_waiting, t.id) then
+    table.insert(s.answers_waiting, t.id)
+  end
+  watch_waiting(s)
+  local key = ask_key_for(t)
+  notify(("answer ready: %s%s"):format(
+    threads_mod.heading(t),
+    key and (" · " .. key .. (t.line == 0 and " in the file" or " on the line") .. " opens it") or ""
+  ))
+end
+
 function M.close_overlay(s)
   local o = s.overlay
   s.overlay = nil
@@ -553,6 +642,11 @@ end
 ---@param t annodiff.Thread
 function M.open_thread(s, t)
   M.close_overlay(s)
+  if s.answers_waiting then
+    s.answers_waiting = vim.tbl_filter(function(id)
+      return id ~= t.id
+    end, s.answers_waiting)
+  end
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"

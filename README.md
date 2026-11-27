@@ -307,6 +307,14 @@ thread.*
 the thread's session) or retry after a failure, `y` promote the answer to an
 annotation (an existing annotation there is kept above it), `x` cancel, `d`
 delete, `q` close. The tree header shows `⟢ N answering` while answers stream.
+
+When an answer (or an error) arrives, its thread window opens by itself, also
+after a follow-up. It does not take focus while you are busy: in insert,
+visual or command-line mode, in another float (an annotation you are typing,
+another thread) or outside the review, you get an `answer ready: f.lua:2 (+)`
+notice instead, and the window opens once you are back in the review in
+normal mode. Canceled answers stay closed. `agent = { auto_show = false }`
+turns this off.
 Threads live for the review and follow their line when the code moves;
 refresh drops threads whose file left it.
 
@@ -425,6 +433,7 @@ require("annodiff").setup({
     model = nil, -- e.g. "haiku"
     args = {}, -- extra CLI arguments, appended last
     system_prompt = nil, -- replaces the default answer guidance
+    auto_show = true, -- open the thread window when its answer arrives
   },
   keymaps = {
     next_file = "<Tab>",

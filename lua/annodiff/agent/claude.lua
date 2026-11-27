@@ -39,6 +39,7 @@ M.DISALLOWED_TOOLS = {
 ---@field model? string
 ---@field args? string[]
 ---@field system_prompt? string
+---@field auto_show? boolean open the thread window when its answer arrives (default true)
 
 ---@class annodiff.AgentRequest
 ---@field prompt string

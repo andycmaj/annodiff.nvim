@@ -96,6 +96,11 @@ describe("ask the agent", function()
     eq("hello", t.turns[1].answer)
     eq("sess-ok", t.session_id)
     eq({ "  ⟢ Q: why 20?", "    hello" }, preview_text(s))
+    -- the owner stayed in the diff window: the thread window opened on its own
+    truthy(s.overlay, "thread window auto-opened")
+    eq(s.overlay.win, api.nvim_get_current_win())
+    press("q")
+    eq(nil, s.overlay)
   end)
 
   it("the agent got a hermetic fork of the parent session, prompt on stdin, repo as cwd", function()
@@ -132,6 +137,8 @@ describe("ask the agent", function()
     eq("sess-ok", args[i + 2])
     eq(-1, vim.fn.index(args, "--fork-session"))
     eq("Follow-up question about f.lua line 2:\n\nand then?\n", read(record .. ".stdin"))
+    truthy(s.overlay and s.overlay.thread == t.id, "thread window reopened with the follow-up's answer")
+    press("q")
   end)
 
   it("y promotes the answer to an annotation", function()
@@ -233,7 +240,7 @@ describe("threads follow their line", function()
   vim.cmd.cd(repo)
   vim.env.FAKE_CLAUDE_RECORD = repo .. "/rec"
   vim.env.FAKE_CLAUDE_MODE = "ok"
-  config.options.agent = { binary = fake }
+  config.options.agent = { binary = fake, auto_show = false } -- keep focus in the diff for these
   quiet(function()
     vim.cmd("Annodiff --inline HEAD")
   end)
@@ -319,5 +326,157 @@ describe("threads follow their line", function()
       vim.cmd("AnnodiffClose")
     end)
     config.options.agent = vim.deepcopy(config.defaults.agent)
+  end)
+end)
+
+-- RIKER-0286: the answer's thread window opens by itself when the answer
+-- arrives, unless the owner is busy (typing, another float); then it waits
+-- for them to come back to the review in normal mode.
+describe("answers show themselves", function()
+  local repo = vim.fn.resolve(vim.fn.tempname())
+  vim.fn.mkdir(repo, "p")
+  sh(repo, { "git", "init", "-q", "-b", "main" })
+  vim.fn.writefile({ "one", "two", "three" }, repo .. "/g.txt")
+  sh(repo, { "git", "add", "-A" })
+  sh(repo, { "git", "commit", "-q", "-m", "init" })
+  vim.fn.writefile({ "one", "TWO", "three", "four" }, repo .. "/g.txt")
+  vim.cmd.cd(repo)
+  vim.env.FAKE_CLAUDE_RECORD = repo .. "/rec"
+  vim.env.FAKE_CLAUDE_MODE = "slow"
+  vim.env.FAKE_CLAUDE_PAUSE = "0.4"
+  config.options.agent = { binary = fake }
+  quiet(function()
+    vim.cmd("Annodiff HEAD")
+  end)
+  local s = require("annodiff.view").current()
+
+  local notes = {}
+  local orig_notify = vim.notify
+  vim.notify = function(msg)
+    table.insert(notes, msg)
+  end
+
+  it("typing a note when the answer lands: no focus steal, a notice, then it opens back in the diff", function()
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\cwhy caps?<C-s>")
+    local t = s.threads:get("g.txt", 2, "+")
+    truthy(t, "thread created")
+    eq("streaming", t.status)
+    -- start a note on line 4; the answer lands while its input float has focus
+    -- (the test feed ends insert mode; the float stays open, as mid-typing)
+    api.nvim_win_set_cursor(s.win_new, { 4, 0 })
+    press("\\amid-sen")
+    local input_win = api.nvim_get_current_win()
+    truthy(input_win ~= s.win_new, "annotation input open")
+    vim.wait(5000, function()
+      return t.status == "idle"
+    end, 20)
+    vim.wait(50, function()
+      return false
+    end)
+    eq("idle", t.status)
+    eq("late", t.turns[1].answer)
+    eq(nil, s.overlay, "no thread window over the input")
+    eq(input_win, api.nvim_get_current_win())
+    eq("annodiff: answer ready: g.txt:2 (+) · \\c on the line opens it", notes[#notes])
+    eq({ t.id }, s.answers_waiting)
+    -- finish the note: back in the diff, normal mode, the answer opens
+    press("Atence<C-s>")
+    vim.wait(500, function()
+      return s.overlay ~= nil
+    end, 10)
+    truthy(s.overlay, "thread window opened once back in the diff")
+    eq(t.id, s.overlay.thread)
+    eq(s.overlay.win, api.nvim_get_current_win())
+    eq("mid-sentence", s.store:find("g.txt", 4, "+").text)
+    eq({}, s.answers_waiting)
+    press("q")
+    eq(nil, s.overlay)
+  end)
+
+  it("not while typing: insert mode, a pending operator, another tab or float", function()
+    local ask = require("annodiff.ask")
+    api.nvim_set_current_win(s.win_new)
+    eq(true, ask.safe_to_show(s))
+    local get_mode = api.nvim_get_mode
+    for _, m in ipairs({ "i", "no", "v", "c", "t" }) do
+      api.nvim_get_mode = function()
+        return { mode = m, blocking = false }
+      end
+      local ok = ask.safe_to_show(s)
+      api.nvim_get_mode = get_mode
+      eq(false, ok, "mode " .. m)
+    end
+    api.nvim_set_current_win(s.win_tree)
+    eq(true, ask.safe_to_show(s), "the tree counts as the review")
+    vim.cmd("tabnew")
+    eq(false, ask.safe_to_show(s), "another tab")
+    vim.cmd("tabclose")
+    api.nvim_set_current_tabpage(s.tab)
+    api.nvim_set_current_win(s.win_new)
+  end)
+
+  it("opening the thread by hand clears it from the waiting list", function()
+    s.answers_waiting = {}
+    local t = s.threads:get("g.txt", 2, "+")
+    table.insert(s.answers_waiting, t.id)
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 2, 0 })
+    press("\\c")
+    truthy(s.overlay, "opened")
+    eq({}, s.answers_waiting)
+    press("q")
+  end)
+
+  it("a canceled answer does not open", function()
+    vim.env.FAKE_CLAUDE_MODE = "hang"
+    api.nvim_set_current_win(s.win_new)
+    press("\\Cfile?<C-s>")
+    local t = s.threads:get("g.txt", 0, "")
+    vim.wait(3000, function()
+      return t.turns[1].answer == "thinking"
+    end, 20)
+    require("annodiff.ask").cancel(s, t)
+    vim.wait(3000, function()
+      return t.status == "failed"
+    end, 20)
+    vim.wait(100, function()
+      return false
+    end)
+    eq("canceled", t.err)
+    eq(nil, s.overlay)
+    eq({}, s.answers_waiting)
+    vim.env.FAKE_CLAUDE_MODE = "slow"
+  end)
+
+  it("agent.auto_show = false leaves it closed and says nothing", function()
+    config.options.agent = { binary = fake, auto_show = false }
+    local before = #notes
+    api.nvim_set_current_win(s.win_new)
+    api.nvim_win_set_cursor(s.win_new, { 3, 0 })
+    press("\\cand this?<C-s>")
+    local t = s.threads:get("g.txt", 3, " ")
+    vim.wait(5000, function()
+      return t.status == "idle"
+    end, 20)
+    vim.wait(100, function()
+      return false
+    end)
+    eq("idle", t.status)
+    eq(nil, s.overlay)
+    eq(s.win_new, api.nvim_get_current_win())
+    for i = before + 1, #notes do
+      eq(nil, notes[i]:find("answer ready", 1, true), notes[i])
+    end
+  end)
+
+  it("cleanup", function()
+    vim.notify = orig_notify
+    quiet(function()
+      vim.cmd("AnnodiffClose")
+    end)
+    config.options.agent = vim.deepcopy(config.defaults.agent)
+    vim.env.FAKE_CLAUDE_PAUSE = nil
   end)
 end)

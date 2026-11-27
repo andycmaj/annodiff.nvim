@@ -191,6 +191,11 @@ about the line, range or file. The answer streams in under the line. On a
 line with a thread, the same key opens it: `c` follow-up or retry, `y`
 promote to an annotation, `x` cancel, `d` delete, `q` close.
 
+When an answer arrives, its thread window opens by itself. While you are
+typing, in another float or outside the review, a notice says the answer is
+ready and the window opens once you are back in the review in normal mode.
+`agent = { auto_show = false }` turns this off.
+
 Threads fork `$ANNODIFF_AGENT_PARENT_SESSION` (or
 `$REVDIFF_AGENT_PARENT_SESSION`) when set. Turn the feature off with
 `agent = false`.
@@ -211,6 +216,7 @@ Threads fork `$ANNODIFF_AGENT_PARENT_SESSION` (or
       model = nil, -- e.g. "haiku"
       args = {}, -- extra CLI arguments, appended last
       system_prompt = nil, -- replaces the default answer guidance
+      auto_show = true, -- open the thread window when its answer arrives
     },
     keymaps = {
       next_file = "<Tab>",
