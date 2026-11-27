@@ -1,0 +1,42 @@
+## 1. open.sh src/app.ts (no --doc)
+opened annodiff (--doc <scratch>/repo/src/app.ts) in a new tmux window, in <scratch>/repo; notes will be sent to pane %0
+(exit 0)
+----- annodiff window -----
+ [No Name]  2 s/app.ts                                                                                                                                         X
+src/app.ts                         │export const a = 1;
+0 headings                         │export const b = 3;
+(no headings)                      │~
+~                                  │~
+~                                  │~
+~                                  │~
+~                                  │~
+~                                  │~
+~                                  │~
+~                                  │~
+~                                  │~
+---------------------------
+
+## 2. annotate line 2 with \a, then \q (send and quit)
+----- claude pane (%0) -----
+annodiff annotations (from /annodiff nvim, review: app.ts; the review is closed, this is the final set):
+## src/app.ts:2 ( )
+why 3?
+-------------------------------
+
+## 3. open.sh release (a branch and a file of that name: the ref wins, a diff)
+opened annodiff (release) in a new tmux window, in <scratch>/repo; notes will be sent to pane %0
+(exit 0)
+----- annodiff window -----
+ [No Name]  3 s/app.ts                                                                                                                                         X
+release → worktree                 │  export const a = 1;                                        │  export const a = 1;
+1 file                             │  export const b = 2;                                        │  export const b = 3;
+▾ src/                             │~                                                            │~
+  M app.ts                         │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+~                                  │~                                                            │~
+---------------------------

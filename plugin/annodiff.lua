@@ -12,14 +12,16 @@ vim.api.nvim_create_user_command("Annodiff", function(cmd)
   require("annodiff").open(cmd.fargs)
 end, {
   nargs = "*",
-  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B | --base [branch] | --pr [N|URL]], or a document: :Annodiff <file.md> | --doc [file] [ref]",
+  desc = "Review a git diff: :Annodiff [--staged] [--inline|--split] [ref | A..B | A...B | --base [branch] | --pr [N|URL]], or a document: :Annodiff <file> [ref] | --doc [file] [ref]",
   complete = function(arglead)
     local items = { "--staged", "--inline", "--split", "--base", "--pr", "--doc" }
     vim.list_extend(items, require("annodiff.git").refs())
-    -- documents: markdown files and the directories leading to them
+    -- documents: markdown files and the directories leading to them; once a directory
+    -- is typed (src/), any file in it (a file that is not a ref opens doc mode)
     local is_markdown = require("annodiff.doc").is_markdown
+    local in_dir = arglead:find("/", 1, true) ~= nil
     for _, f in ipairs(vim.fn.getcompletion(arglead, "file")) do
-      if f:sub(-1) == "/" or is_markdown(f) then
+      if f:sub(-1) == "/" or in_dir or is_markdown(f) then
         table.insert(items, f)
       end
     end

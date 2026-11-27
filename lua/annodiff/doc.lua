@@ -21,16 +21,29 @@ function M.is_markdown(path)
   return ext ~= nil and MARKDOWN[ext:lower()] == true
 end
 
+--- Whether a name resolves as a commit in the cwd's repo (false outside a repo).
+---@param name string
+function M.names_commit(name)
+  local ok, res = pcall(function()
+    return vim.system({ "git", "rev-parse", "--verify", "--quiet", "--end-of-options", name .. "^{commit}" }, {
+      text = true,
+    }):wait()
+  end)
+  return ok and res.code == 0
+end
+
 --- Decide whether :Annodiff arguments ask for doc mode.
 ---
 --- Explicit: `--doc [file] [ref]`. The file defaults to the current buffer's file.
---- Auto: a first argument that is a readable markdown file (a path wins over a ref of
---- the same name), optionally followed by a ref.
+--- Auto: a first argument that is a readable file, optionally followed by a ref. A
+--- markdown path wins over a ref of the same name; any other file opens doc mode
+--- unless its name resolves as a commit (a real ref wins).
 --- Returns nil (and no error) when the arguments are a diff review.
 ---@param args string[]
 ---@param current_file? string the current buffer's file, for a bare --doc
+---@param names_commit? fun(name: string): boolean default M.names_commit
 ---@return annodiff.DocArgs? doc, string? err
-function M.parse_args(args, current_file)
+function M.parse_args(args, current_file, names_commit)
   local explicit = false
   local positional = {}
   local other_flag
@@ -50,7 +63,11 @@ function M.parse_args(args, current_file)
     if other_flag or #positional == 0 or #positional > 2 then
       return nil
     end
-    if not (M.is_markdown(positional[1]) and readable(positional[1])) then
+    local first = positional[1]
+    if not readable(first) then
+      return nil
+    end
+    if not M.is_markdown(first) and (names_commit or M.names_commit)(first) then
       return nil
     end
     return { path = positional[1], ref = positional[2] }

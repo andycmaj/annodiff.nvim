@@ -29,13 +29,18 @@ if ! busy="$("$dir/review-lock.sh" check "$TMUX_PANE")"; then
   echo "error: a review opened from this pane is still open ($label, $where): wait for its close message (the user sends notes and closes it, or \\q sends and quits), then open this one" >&2
   exit 1
 fi
-# A document instead of a diff: `--doc <file> [ref]`, or a markdown file as the first
-# argument. The file can be anywhere, in a repo or not (an agent's message written to a
-# scratch dir); Neovim runs from its repo, else from its directory.
+# A document instead of a diff: `--doc <file> [ref]`, or an existing file as the first
+# argument (optionally followed by a ref): a markdown file always, any other file unless
+# its name resolves as a commit (a real ref wins), as doc.parse_args decides. The file can
+# be anywhere, in a repo or not (an agent's message written to a scratch dir); Neovim runs
+# from its repo, else from its directory.
 doc=""
 for a in "$@"; do [ "$a" = --doc ] && doc=1; done
 if [ -z "$doc" ] && [ $# -ge 1 ] && [ -f "$1" ]; then
-  case "$1" in *.md | *.markdown | *.mdx | *.mkd | *.mdown) doc=1 ;; esac
+  case "$1" in
+    *.md | *.markdown | *.mdx | *.mkd | *.mdown) doc=1 ;;
+    *) git rev-parse --verify --quiet --end-of-options "$1^{commit}" >/dev/null 2>&1 || doc=1 ;;
+  esac
 fi
 if [ -n "$doc" ]; then
   file="" ref=""

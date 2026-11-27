@@ -97,7 +97,7 @@ Then, optionally, `require("annodiff").setup({ ... })` in your config.
 | `:Annodiff A...B` | merge base of `A` and `B` | `B` |
 | `:Annodiff --base [branch]` | merge base of `branch` and `HEAD` | worktree |
 | `:Annodiff --pr [N\|URL]` | merge base of the PR's base and head | PR head (worktree when checked out) |
-| `:Annodiff <file.md> [ref]` | a document, not a diff: see [Documents](#documents-doc-mode) | |
+| `:Annodiff <file> [ref]` | a document, not a diff: see [Documents](#documents-doc-mode) | |
 
 `:Annodiff HEAD` is the uncommitted changes, staged and unstaged.
 
@@ -128,6 +128,7 @@ For a plan, spec or README you want to annotate rather than diff:
 
 ```vim
 :Annodiff docs/plan.md          " any markdown file path opens doc mode
+:Annodiff src/app.ts            " so does any other file that is not a ref
 :Annodiff --doc notes.txt       " --doc forces it, for any file
 :Annodiff --doc                 " the current buffer's file
 :Annodiff docs/plan.md main     " also mark what changed since main
@@ -152,9 +153,11 @@ notes survive even when no send or close runs), and no revdiff history entry is 
 `/annodiff` annotates one of Claude's own messages: it writes the message to a scratch
 `.md` file and opens it with `--doc`.
 
-Why both an explicit flag and auto-detection: a markdown path is never a ref anyone
-means to diff, so `:Annodiff plan.md` can just do the right thing (a readable markdown
-file wins over a ref of the same name). Other files are ambiguous, so they need `--doc`.
+Why both an explicit flag and auto-detection: an existing file is almost never a ref
+anyone means to diff, so `:Annodiff plan.md` or `:Annodiff src/app.ts` can just do the
+right thing. A readable markdown file wins over a ref of the same name; any other file
+opens doc mode unless its name resolves as a commit (a branch called `release` beside a
+file called `release` is still a diff), and `--doc` settles it either way.
 Plan review (`annodiff-planning`) passes `--doc plan.md HEAD` explicitly rather than
 relying on detection.
 

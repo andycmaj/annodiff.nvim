@@ -1,0 +1,20 @@
+  FAIL doc.parse_args > any other existing file opens doc mode too, unless it names a commit (issue #2)
+...n-markdown-file-path-treated-as-a-git/tests/doc_spec.lua:124: expected:
+       {
+         path = "/private/var/folders/ph/3vczz4zj7yj01knh26pjn2j80000gn/T/nvim.ac/gCxvG9/47/code.lua"
+--
+  FAIL :Annodiff <file> for a non-markdown file (issue #2) > opens doc mode with the review keys, not 'unknown revision'
+...n-markdown-file-path-treated-as-a-git/tests/doc_spec.lua:416: doc session; notices: { "annodiff: unknown revision: src/app.ts" }
+       stack traceback:
+       	[C]: in function 'error'
+--
+  FAIL :Annodiff <file> for a non-markdown file (issue #2) > takes a ref after the file, as --doc does
+...n-markdown-file-path-treated-as-a-git/tests/doc_spec.lua:431: doc session
+       stack traceback:
+       	[C]: in function 'error'
+--
+  ok   :Annodiff <file> for a non-markdown file (issue #2) > a name that resolves as a commit is still a diff review
+  FAIL :Annodiff <file> for a non-markdown file (issue #2) > when a readable file still fails as a ref, the error suggests --doc
+...n-markdown-file-path-treated-as-a-git/tests/doc_spec.lua:454: { "annodiff: unknown revision: src/app.ts" }
+       stack traceback:
+       	[C]: in function 'error'

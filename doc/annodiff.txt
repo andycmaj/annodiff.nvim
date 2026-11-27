@@ -68,7 +68,7 @@ under `pack/*/start/`), then run `:helptags ALL` once.
   `:Annodiff A...B`           merge base of A and B vs B
   `:Annodiff --base [branch]` merge base of {branch} and `HEAD` vs worktree
   `:Annodiff --pr [N|URL]`    a GitHub pull request, as GitHub diffs it
-  `:Annodiff {file.md} [ref]` a document, see |annodiff-doc-mode|
+  `:Annodiff {file} [ref]`    a document, see |annodiff-doc-mode|
   `:Annodiff --doc [file] [ref]`
 
                                                              *annodiff---base*
@@ -101,6 +101,7 @@ fetches `refs/pull/N/head` and the base branch and reads them read-only.
 
 >vim
   :Annodiff docs/plan.md          " a markdown path opens doc mode
+  :Annodiff src/app.ts            " so does any file that is not a ref
   :Annodiff --doc notes.txt       " --doc forces it, for any file
   :Annodiff --doc                 " the current buffer's file
   :Annodiff docs/plan.md main     " also mark what changed since main

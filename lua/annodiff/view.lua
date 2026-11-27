@@ -1236,6 +1236,13 @@ function M.open(args)
     spec, serr = git.resolve(root, spec)
   end
   if not spec then
+    -- a file taken as a ref (beside a flag, say): point at doc mode
+    for _, a in ipairs(args) do
+      if a:sub(1, 2) ~= "--" and vim.fn.filereadable(vim.fn.expand(a)) == 1 then
+        serr = ("%s (%s is a file: to review it as a document, :Annodiff --doc %s)"):format(serr, a, a)
+        break
+      end
+    end
     notify(serr, vim.log.levels.ERROR)
     return
   end
